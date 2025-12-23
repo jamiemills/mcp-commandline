@@ -52,11 +52,107 @@ EOF
     exit 1
 }
 
+# Validation functions
+
+# Validate URL format (must be valid HTTP/HTTPS URL)
+validate_url() {
+    local url="$1"
+    local url_regex='^https?://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}(/.*)?$'
+
+    if [[ ! "$url" =~ $url_regex ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate scope enum
+validate_scope() {
+    local scope="$1"
+    if [[ ! "$scope" =~ ^(local|project|user)$ ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate server name (alphanumeric with hyphens and underscores)
+validate_server_name() {
+    local name="$1"
+    local name_regex='^[a-zA-Z0-9_-]+$'
+
+    if [[ ! "$name" =~ $name_regex ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate environment variable name
+validate_env_var_name() {
+    local var_name="$1"
+    local var_regex='^[a-zA-Z_][a-zA-Z0-9_]*$'
+
+    if [[ ! "$var_name" =~ $var_regex ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate field is an object
+validate_is_object() {
+    local field="$1"
+    if [ "$field" = "null" ] || [ -z "$field" ]; then
+        return 1
+    fi
+    if ! echo "$field" | jq empty 2>/dev/null; then
+        return 1
+    fi
+    # Check if it's an object by looking for {}
+    if ! echo "$field" | jq 'type == "object"' | grep -q "true"; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate field is an array
+validate_is_array() {
+    local field="$1"
+    if [ "$field" = "null" ] || [ -z "$field" ]; then
+        return 1
+    fi
+    if ! echo "$field" | jq empty 2>/dev/null; then
+        return 1
+    fi
+    # Check if it's an array
+    if ! echo "$field" | jq 'type == "array"' | grep -q "true"; then
+        return 1
+    fi
+    return 0
+}
+
+# Validate array contains only strings
+validate_array_of_strings() {
+    local array="$1"
+    local count=$(echo "$array" | jq 'length')
+
+    for ((i=0; i<count; i++)); do
+        local element=$(echo "$array" | jq -r ".[$i]")
+        if [ "$element" = "null" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Function to process a single server and generate command
 process_server() {
     local name="$1"
     local type="$2"
     local config="$3"
+
+    # Validate server name
+    if ! validate_server_name "$name"; then
+        echo "Error: Server name '$name' is invalid. Must contain only alphanumeric characters, hyphens, and underscores" >&2
+        exit 1
+    fi
 
     # Validate type
     if [[ ! "$type" =~ ^(http|sse|stdio)$ ]]; then
@@ -77,11 +173,23 @@ process_server() {
             exit 1
         fi
 
+        # Validate URL format
+        if ! validate_url "$url"; then
+            echo "Error: Invalid URL format for '$url'. Must be valid HTTP(S) URL" >&2
+            exit 1
+        fi
+
         cmd="$cmd $url"
 
         # Add headers if present
-        headers=$(echo "$config" | jq -r '.headers // empty')
+        headers=$(echo "$config" | jq '.headers // empty')
         if [ -n "$headers" ] && [ "$headers" != "null" ]; then
+            # Validate headers is an object
+            if ! validate_is_object "$headers"; then
+                echo "Error: 'headers' must be an object (key-value pairs)" >&2
+                exit 1
+            fi
+
             while IFS= read -r line; do
                 key=$(echo "$line" | jq -r '.key')
                 value=$(echo "$line" | jq -r '.value')
@@ -99,11 +207,24 @@ process_server() {
         fi
 
         # Add environment variables if present
-        env_vars=$(echo "$config" | jq -r '.env // empty')
+        env_vars=$(echo "$config" | jq '.env // empty')
         if [ -n "$env_vars" ] && [ "$env_vars" != "null" ]; then
+            # Validate env is an object
+            if ! validate_is_object "$env_vars"; then
+                echo "Error: 'env' must be an object (key-value pairs)" >&2
+                exit 1
+            fi
+
             while IFS= read -r line; do
                 key=$(echo "$line" | jq -r '.key')
                 value=$(echo "$line" | jq -r '.value')
+
+                # Validate environment variable name
+                if ! validate_env_var_name "$key"; then
+                    echo "Error: Invalid environment variable name '$key'. Must start with letter or underscore, contain only alphanumeric characters and underscores" >&2
+                    exit 1
+                fi
+
                 cmd="$cmd --env $key=\"$value\""
             done < <(echo "$config" | jq -c '.env | to_entries[] | {key: .key, value: .value}')
         fi
@@ -111,6 +232,10 @@ process_server() {
         # Add scope before the -- separator if present
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
+            if ! validate_scope "$scope"; then
+                echo "Error: 'scope' must be one of: local, project, user. Got: '$scope'" >&2
+                exit 1
+            fi
             cmd="$cmd --scope $scope"
         fi
 
@@ -121,8 +246,20 @@ process_server() {
         cmd="$cmd $command"
 
         # Add args if present
-        args=$(echo "$config" | jq -r '.args // empty')
+        args=$(echo "$config" | jq '.args // empty')
         if [ -n "$args" ] && [ "$args" != "null" ]; then
+            # Validate args is an array
+            if ! validate_is_array "$args"; then
+                echo "Error: 'args' must be an array of strings" >&2
+                exit 1
+            fi
+
+            # Validate array contains only strings
+            if ! validate_array_of_strings "$args"; then
+                echo "Error: 'args' array contains non-string elements. All array elements must be strings" >&2
+                exit 1
+            fi
+
             while IFS= read -r arg; do
                 # Quote args that contain spaces
                 if [[ "$arg" =~ [[:space:]] ]]; then
@@ -141,6 +278,10 @@ process_server() {
     if [[ "$type" != "stdio" ]]; then
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
+            if ! validate_scope "$scope"; then
+                echo "Error: 'scope' must be one of: local, project, user. Got: '$scope'" >&2
+                exit 1
+            fi
             cmd="$cmd --scope $scope"
         fi
     fi
@@ -180,6 +321,12 @@ if [ -z "$JSON_INPUT" ]; then
         usage
     fi
     JSON_INPUT=$(cat)
+fi
+
+# Validate JSON is valid
+if ! echo "$JSON_INPUT" | jq empty 2>/dev/null; then
+    echo "Error: Invalid JSON input" >&2
+    exit 1
 fi
 
 # Validate jq is available
