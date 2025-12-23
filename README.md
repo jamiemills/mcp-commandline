@@ -39,7 +39,9 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 ./json-to-mcp-add.sh -x < config.json
 ```
 
-## JSON Configuration Schema
+## JSON Configuration Formats
+
+### Format 1: Flat Format
 
 ```json
 {
@@ -60,6 +62,31 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 }
 ```
 
+### Format 2: Claude Desktop Config
+
+This format matches the `mcpServers` object from Claude Desktop's configuration:
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "type": "http|sse|stdio",       // (required) Transport type
+      "url": "https://...",           // (required for http/sse)
+      "command": "/path/to/cmd",      // (required for stdio)
+      "args": ["arg1", "arg2"],       // (optional for stdio)
+      "headers": {                    // (optional for http/sse)
+        "Authorization": "Bearer token"
+      },
+      "env": {                        // (optional for stdio)
+        "API_KEY": "secret"
+      }
+    }
+  }
+}
+```
+
+The script automatically detects which format is being used and handles both transparently.
+
 ### Scope Options
 
 - `local` – Store in project-level `~/.claude.json` (default)
@@ -68,7 +95,23 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 
 ## Examples
 
-### HTTP Server with Authentication
+### Claude Desktop Config Format
+
+Extract servers from a Claude Desktop config file:
+
+```bash
+./json-to-mcp-add.sh < ~/.claude/config.json
+```
+
+Output:
+```
+claude mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer token"
+claude mcp add --transport stdio airtable -- npx -y airtable-mcp-server
+```
+
+### Flat Format
+
+#### HTTP Server with Authentication
 
 ```bash
 ./json-to-mcp-add.sh << 'EOF'
@@ -89,7 +132,7 @@ Output:
 claude mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer sk_live_..." --scope project
 ```
 
-### Stdio Server with Environment Variables
+#### Stdio Server with Environment Variables
 
 ```bash
 ./json-to-mcp-add.sh << 'EOF'
@@ -110,7 +153,7 @@ Output:
 claude mcp add --transport stdio airtable --env AIRTABLE_API_KEY="pat_..." -- npx -y airtable-mcp-server
 ```
 
-### SSE Server
+#### SSE Server
 
 ```bash
 ./json-to-mcp-add.sh '{"name":"asana","type":"sse","url":"https://mcp.asana.com/sse"}'
