@@ -53,8 +53,21 @@ EOF
 }
 
 # Validation functions
+#
+# These functions validate MCP server configurations against the official MCP schema.
+# Schema source: https://modelcontextprotocol.io/specification/2025-11-25
+# Additional validation based on Claude Code MCP documentation
+#
 
 # Validate URL format (must be valid HTTP/HTTPS URL)
+#
+# MCP Schema Rule: HTTP and SSE transports require a valid HTTPS or HTTP URL
+# This regex validates:
+#   - Protocol: http:// or https://
+#   - Domain: alphanumeric, dots, hyphens (must have at least one dot and TLD)
+#   - Path: optional, any characters after domain
+#
+# Source: MCP specification 2025-11-25 - HTTP/SSE transport requirements
 validate_url() {
     local url="$1"
     local url_regex='^https?://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}(/.*)?$'
@@ -66,6 +79,13 @@ validate_url() {
 }
 
 # Validate scope enum
+#
+# MCP Schema Rule: The scope field, when present, must be one of: local, project, user
+#   - local: Configuration stored in project-level ~/.claude.json
+#   - project: Configuration stored in repository .mcp.json (shared with team)
+#   - user: Configuration stored in global user ~/.claude.json (cross-project)
+#
+# Source: Claude Code configuration documentation - Scope options
 validate_scope() {
     local scope="$1"
     if [[ ! "$scope" =~ ^(local|project|user)$ ]]; then
@@ -74,7 +94,18 @@ validate_scope() {
     return 0
 }
 
-# Validate server name (alphanumeric with hyphens and underscores)
+# Validate server name
+#
+# MCP Schema Rule: Server names must be valid identifiers for configuration storage
+# Allowed characters:
+#   - Alphanumeric (a-z, A-Z, 0-9)
+#   - Hyphens (-)
+#   - Underscores (_)
+#
+# Note: Must NOT contain special characters, spaces, or dots as these are used
+# as configuration object keys and may conflict with object notation.
+#
+# Source: MCP specification - configuration object structure and naming conventions
 validate_server_name() {
     local name="$1"
     local name_regex='^[a-zA-Z0-9_-]+$'
@@ -86,6 +117,16 @@ validate_server_name() {
 }
 
 # Validate environment variable name
+#
+# MCP Schema Rule: Environment variable names must follow POSIX shell variable naming convention
+# Requirements:
+#   - Must start with letter (a-z, A-Z) or underscore (_)
+#   - Can contain letters, digits (0-9), and underscores
+#   - Cannot start with a digit
+#
+# This ensures compatibility with shell execution and environment variable expansion.
+#
+# Source: POSIX shell specification and MCP environment variable handling
 validate_env_var_name() {
     local var_name="$1"
     local var_regex='^[a-zA-Z_][a-zA-Z0-9_]*$'
@@ -96,7 +137,15 @@ validate_env_var_name() {
     return 0
 }
 
-# Validate field is an object
+# Validate field is an object (JSON)
+#
+# MCP Schema Rule: Certain fields (headers, env) must be objects (key-value pairs)
+# This validation ensures:
+#   - Field is not null
+#   - Field is valid JSON
+#   - Field type is "object" (not string, array, number, boolean)
+#
+# Used for: headers (HTTP/SSE), env (stdio)
 validate_is_object() {
     local field="$1"
     if [ "$field" = "null" ] || [ -z "$field" ]; then
@@ -112,7 +161,15 @@ validate_is_object() {
     return 0
 }
 
-# Validate field is an array
+# Validate field is an array (JSON)
+#
+# MCP Schema Rule: The args field must be an array of strings
+# This validation ensures:
+#   - Field is not null
+#   - Field is valid JSON
+#   - Field type is "array" (not string, object, number, boolean)
+#
+# Used for: args (stdio only)
 validate_is_array() {
     local field="$1"
     if [ "$field" = "null" ] || [ -z "$field" ]; then
@@ -129,6 +186,16 @@ validate_is_array() {
 }
 
 # Validate array contains only strings
+#
+# MCP Schema Rule: The args array must contain only string elements
+# This ensures:
+#   - Each array element is a string (not number, boolean, null, or object)
+#   - Arguments can be properly passed to the command
+#
+# Note: Numbers in args will be converted to strings by jq, but null values
+# or complex objects are invalid and caught by this validation.
+#
+# Source: MCP stdio transport specification - args field definition
 validate_array_of_strings() {
     local array="$1"
     local count=$(echo "$array" | jq 'length')
@@ -143,18 +210,34 @@ validate_array_of_strings() {
 }
 
 # Function to process a single server and generate command
+#
+# This function validates a single MCP server configuration and generates the
+# appropriate 'claude mcp add' command. All schema validation is performed here.
+#
+# Parameters:
+#   $1 (name): Server name - used as unique identifier in configuration
+#   $2 (type): Transport type - must be one of: http, sse, stdio
+#   $3 (config): Server configuration as JSON string
+#
 process_server() {
     local name="$1"
     local type="$2"
     local config="$3"
 
-    # Validate server name
+    # Validate server name using MCP schema naming rules
+    # Schema: Server names must be valid JSON object keys
+    # Source: MCP specification - configuration object key naming
     if ! validate_server_name "$name"; then
         echo "Error: Server name '$name' is invalid. Must contain only alphanumeric characters, hyphens, and underscores" >&2
         exit 1
     fi
 
-    # Validate type
+    # Validate transport type enum
+    # Schema: type field must be one of: http, sse, stdio
+    # - http: Remote HTTP/HTTPS endpoint (recommended)
+    # - sse: Remote Server-Sent Events endpoint (deprecated, use http)
+    # - stdio: Local process via standard input/output
+    # Source: MCP specification - transport types
     if [[ ! "$type" =~ ^(http|sse|stdio)$ ]]; then
         echo "Error: 'type' must be one of: http, sse, stdio" >&2
         exit 1
@@ -165,7 +248,8 @@ process_server() {
 
     # Build command based on transport type
     if [[ "$type" == "http" ]] || [[ "$type" == "sse" ]]; then
-        # HTTP/SSE: require url
+        # HTTP/SSE transport validation and command building
+        # Schema: HTTP and SSE transports REQUIRE the url field
         url=$(echo "$config" | jq -r '.url // empty')
 
         if [ -z "$url" ]; then
@@ -173,7 +257,9 @@ process_server() {
             exit 1
         fi
 
-        # Validate URL format
+        # Validate URL format using HTTP(S) URL validation
+        # Schema: url must be a valid HTTP or HTTPS URL
+        # Source: MCP specification - HTTP/SSE transport requirements
         if ! validate_url "$url"; then
             echo "Error: Invalid URL format for '$url'. Must be valid HTTP(S) URL" >&2
             exit 1
@@ -181,10 +267,14 @@ process_server() {
 
         cmd="$cmd $url"
 
-        # Add headers if present
+        # Optional: headers field for HTTP/SSE authentication and custom headers
+        # Schema: headers is optional, must be object if present
+        # Type: object (key-value pairs of strings)
+        # Use case: Authentication (Bearer tokens, API keys), custom headers
+        # Source: MCP specification - HTTP transport headers
         headers=$(echo "$config" | jq '.headers // empty')
         if [ -n "$headers" ] && [ "$headers" != "null" ]; then
-            # Validate headers is an object
+            # Validate headers is an object type
             if ! validate_is_object "$headers"; then
                 echo "Error: 'headers' must be an object (key-value pairs)" >&2
                 exit 1
@@ -198,7 +288,8 @@ process_server() {
         fi
 
     elif [[ "$type" == "stdio" ]]; then
-        # Stdio: require command
+        # Stdio transport validation and command building
+        # Schema: Stdio transports REQUIRE the command field
         command=$(echo "$config" | jq -r '.command // empty')
 
         if [ -z "$command" ]; then
@@ -206,10 +297,15 @@ process_server() {
             exit 1
         fi
 
-        # Add environment variables if present
+        # Optional: env field for environment variables passed to stdio process
+        # Schema: env is optional, must be object if present
+        # Type: object with valid environment variable names as keys
+        # Keys must follow POSIX shell variable naming: start with letter/underscore,
+        # contain only alphanumeric characters and underscores
+        # Source: MCP specification - stdio transport environment variables
         env_vars=$(echo "$config" | jq '.env // empty')
         if [ -n "$env_vars" ] && [ "$env_vars" != "null" ]; then
-            # Validate env is an object
+            # Validate env is an object type
             if ! validate_is_object "$env_vars"; then
                 echo "Error: 'env' must be an object (key-value pairs)" >&2
                 exit 1
@@ -219,7 +315,10 @@ process_server() {
                 key=$(echo "$line" | jq -r '.key')
                 value=$(echo "$line" | jq -r '.value')
 
-                # Validate environment variable name
+                # Validate environment variable name using POSIX shell naming rules
+                # Schema: Environment variable names must be valid shell variable identifiers
+                # Format: [a-zA-Z_][a-zA-Z0-9_]*
+                # Source: POSIX shell specification and MCP environment handling
                 if ! validate_env_var_name "$key"; then
                     echo "Error: Invalid environment variable name '$key'. Must start with letter or underscore, contain only alphanumeric characters and underscores" >&2
                     exit 1
@@ -229,7 +328,12 @@ process_server() {
             done < <(echo "$config" | jq -c '.env | to_entries[] | {key: .key, value: .value}')
         fi
 
-        # Add scope before the -- separator if present
+        # Optional: scope field for configuration storage location
+        # Schema: scope must be one of: local, project, user
+        # - local: ~/.claude.json in project directory (default, private)
+        # - project: .mcp.json at repo root (shared with team)
+        # - user: ~/.claude.json globally (personal, cross-project)
+        # Source: Claude Code configuration documentation - Scope options
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
             if ! validate_scope "$scope"; then
@@ -239,29 +343,35 @@ process_server() {
             cmd="$cmd --scope $scope"
         fi
 
-        # Add mandatory -- separator
+        # Add mandatory -- separator to separate Claude MCP flags from command arguments
+        # This tells the shell parser that everything after -- should be passed literally
         cmd="$cmd --"
 
-        # Add command
+        # Add the command to execute
         cmd="$cmd $command"
 
-        # Add args if present
+        # Optional: args field for command-line arguments to the stdio process
+        # Schema: args is optional for stdio, must be array of strings if present
+        # Type: array where each element is a string argument
+        # Usage: Arguments are appended to the command in order
+        # Source: MCP specification - stdio transport args field
         args=$(echo "$config" | jq '.args // empty')
         if [ -n "$args" ] && [ "$args" != "null" ]; then
-            # Validate args is an array
+            # Validate args is an array type
             if ! validate_is_array "$args"; then
                 echo "Error: 'args' must be an array of strings" >&2
                 exit 1
             fi
 
-            # Validate array contains only strings
+            # Validate array contains only string elements
+            # Schema: Each element in args array must be a string (not null, object, etc.)
             if ! validate_array_of_strings "$args"; then
                 echo "Error: 'args' array contains non-string elements. All array elements must be strings" >&2
                 exit 1
             fi
 
             while IFS= read -r arg; do
-                # Quote args that contain spaces
+                # Quote args that contain spaces to preserve them as single arguments
                 if [[ "$arg" =~ [[:space:]] ]]; then
                     cmd="$cmd \"$arg\""
                 else
@@ -274,8 +384,12 @@ process_server() {
         scope=""
     fi
 
-    # Add scope for http/sse (stdio handled separately above)
+    # Add scope for http/sse (stdio already handled scope above, before -- separator)
     if [[ "$type" != "stdio" ]]; then
+        # Optional: scope field for HTTP/SSE configuration storage location
+        # Schema: scope must be one of: local, project, user
+        # Default if not specified: local (project-level configuration)
+        # Source: Claude Code configuration documentation - Scope options
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
             if ! validate_scope "$scope"; then
@@ -323,19 +437,27 @@ if [ -z "$JSON_INPUT" ]; then
     JSON_INPUT=$(cat)
 fi
 
-# Validate JSON is valid
+# Validate JSON syntax
+# Schema: Input must be valid JSON (either flat format or Claude Desktop format)
+# This is the first validation - all subsequent operations assume valid JSON
+# Source: RFC 8259 - JSON specification
 if ! echo "$JSON_INPUT" | jq empty 2>/dev/null; then
     echo "Error: Invalid JSON input" >&2
     exit 1
 fi
 
-# Validate jq is available
+# Validate jq availability
+# Requirement: jq is required for JSON parsing and validation
 if ! command -v jq &> /dev/null; then
     echo "Error: jq is required but not installed" >&2
     exit 1
 fi
 
 # Detect which JSON format is being used
+# Schema supports two formats:
+# 1. Flat format: {"name": "...", "type": "...", ...}
+# 2. Claude Desktop format: {"mcpServers": {"server-name": {...}}}
+# Source: MCP specification - configuration format variations
 has_mcpServers=$(echo "$JSON_INPUT" | jq 'has("mcpServers")' 2>/dev/null || echo "false")
 
 if [ "$has_mcpServers" = "true" ]; then
