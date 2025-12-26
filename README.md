@@ -39,6 +39,48 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 json-to-mcp-add.sh -x < config.json
 ```
 
+## Understanding MCP Communication Layers
+
+When you configure an MCP server with this script, you're participating in a layered communication system. Understanding these layers helps you know what this tool does and what happens after:
+
+### Layer 1: Transport Layer (This Script's Responsibility)
+**Where and how to connect** — The script validates your configuration and generates the `claude mcp add` command that tells Claude Code:
+- Which protocol to use (stdio, HTTP, or SSE)
+- Where the server is located (command path or URL)
+- How to authenticate (headers for HTTP/SSE, environment variables for stdio)
+
+### Layer 2: Connection Layer (Claude Code Runtime)
+**Establishing the connection** — Claude Code's runtime handles:
+- TCP/TLS socket creation
+- Process spawning (for stdio)
+- HTTP/HTTPS connections (for remote servers)
+
+### Layer 3: Protocol Layer (Claude Code Runtime)
+**Speaking MCP** — Once connected, the runtime performs:
+- JSON-RPC 2.0 message exchange
+- `InitializeRequest` handshake to negotiate capabilities
+- `InitializeResponse` containing what the server offers
+
+### Layer 4: Feature Layer (The MCP Server)
+**What the server actually does** — After initialization, the server provides:
+- **Resources** — Data sources and context documents
+- **Tools** — Functions that Claude can call
+- **Prompts** — Reusable message templates
+- **Sampling** — Server-initiated LLM requests (advanced)
+
+**Example Flow:**
+```
+Script: "Connect to https://api.example.com using HTTP"
+  ↓
+Runtime: Establishes HTTPS connection
+  ↓
+Runtime: Sends: {"jsonrpc": "2.0", "method": "initialize", ...}
+  ↓
+Server: Responds: {"result": {"capabilities": {"resources": {}, "tools": {}}}}
+  ↓
+Claude: Now has access to the server's resources and tools
+```
+
 ## Transport Type Inference
 
 The `type` field is **optional** and will be automatically inferred from the configuration structure if not provided. This makes configurations simpler and less verbose.
@@ -309,6 +351,61 @@ $ echo '{"name":"test","type":"stdio","command":"npx","env":{"2INVALID":"val"}}'
 Error: Invalid environment variable name '2INVALID'. Must start with letter or underscore, contain only alphanumeric characters and underscores
 ```
 
+## What Happens After Configuration
+
+Once you run the generated `claude mcp add` command, Claude Code performs the following sequence:
+
+### 1. Configuration Storage
+The server configuration is saved to the specified scope:
+- `local` → `~/.claude.json` (project-level, default)
+- `project` → `.mcp.json` (repository root, team-shared)
+- `user` → Global `~/.claude.json` (cross-project)
+
+### 2. Server Initialization
+When Claude Code starts or you interact with the server, it:
+- Connects using the configured transport (stdio command, HTTP URL, or SSE endpoint)
+- Sends an `InitializeRequest` containing:
+  - Protocol version requirement
+  - Implementation name and version
+  - Requested capabilities (resources, tools, prompts, sampling, etc.)
+
+### 3. Capability Negotiation
+The server responds with `InitializeResponse` containing:
+- Protocol version agreement
+- **Available resources** — Data sources Claude can access
+- **Available tools** — Functions Claude can invoke
+- **Available prompts** — Message templates Claude can use
+- **Server capabilities** — What advanced features the server supports
+
+### 4. Runtime Operation
+Once initialized, Claude Code can:
+- Request resources from the server for context
+- Call tools provided by the server
+- Use prompts to structure queries
+- For advanced servers: allow server to initiate sampling requests
+
+### Example: Configuring a GitHub MCP Server
+
+```bash
+# Configuration (what this script does)
+json-to-mcp-add.sh << 'EOF'
+{
+  "name": "github",
+  "url": "https://mcp.github.com",
+  "headers": {"Authorization": "Bearer ghp_..."}
+}
+EOF
+
+# Output: claude mcp add --transport http github https://mcp.github.com --header "Authorization: Bearer ghp_..."
+
+# What happens after (what Claude Code does)
+# 1. Stores configuration in ~/.claude.json
+# 2. On next use, connects to https://mcp.github.com
+# 3. Sends InitializeRequest negotiating capabilities
+# 4. Receives InitializeResponse with available resources/tools
+# 5. You can now ask Claude to search GitHub, create issues, etc.
+```
+
 ## Design Principles
 
 This script implements comprehensive schema validation based on the official MCP specification:
@@ -318,6 +415,7 @@ This script implements comprehensive schema validation based on the official MCP
 3. **Transparent Conversion** — The script converts between two supported JSON formats (flat and Claude Desktop)
 4. **Clear Errors** — Validation failures include specific, actionable error messages citing the schema rule violated
 5. **No Data Loss** — All schema-valid configuration is preserved in the generated command
+6. **Layered Architecture** — Focuses solely on transport configuration, leaving protocol negotiation to Claude Code runtime
 
 ## Implementation Details
 

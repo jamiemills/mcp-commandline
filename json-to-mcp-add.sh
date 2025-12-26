@@ -540,7 +540,16 @@ if [ "$has_mcpServers" = "true" ]; then
         fi
 
         if [ -z "$type" ]; then
-            echo "Error: 'type' field is required for server '$name'. Provide 'type' explicitly, or ensure the configuration has either 'command' (for stdio) or 'url' (for http) but not both." >&2
+            echo "Error: 'type' field is required for server '$name'" >&2
+            echo "" >&2
+            echo "Reason: Cannot determine transport type from configuration structure." >&2
+            echo "" >&2
+            echo "To fix, either:" >&2
+            echo "  1. Add explicit 'type' field: \"type\": \"http\" or \"type\": \"stdio\"" >&2
+            echo "  2. Use only 'url' field (will infer http): {\"name\":\"...\",\"url\":\"https://...\"}" >&2
+            echo "  3. Use only 'command' field (will infer stdio): {\"name\":\"...\",\"command\":\"npx\",\"args\":[...]}" >&2
+            echo "" >&2
+            echo "Note: If both 'command' and 'url' are present, 'type' must be explicit." >&2
             exit 1
         fi
 
@@ -566,7 +575,16 @@ else
     fi
 
     if [ -z "$type" ]; then
-        echo "Error: 'type' field is required. Provide 'type' explicitly, or ensure the configuration has either 'command' (for stdio) or 'url' (for http) but not both." >&2
+        echo "Error: 'type' field is required for server '$name'" >&2
+        echo "" >&2
+        echo "Reason: Cannot determine transport type from configuration structure." >&2
+        echo "" >&2
+        echo "To fix, either:" >&2
+        echo "  1. Add explicit 'type' field: \"type\": \"http\" or \"type\": \"stdio\"" >&2
+        echo "  2. Use only 'url' field (will infer http): {\"name\":\"...\",\"url\":\"https://...\"}" >&2
+        echo "  3. Use only 'command' field (will infer stdio): {\"name\":\"...\",\"command\":\"npx\",\"args\":[...]}" >&2
+        echo "" >&2
+        echo "Note: If both 'command' and 'url' are present, 'type' must be explicit." >&2
         exit 1
     fi
 
