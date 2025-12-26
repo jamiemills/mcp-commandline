@@ -10,19 +10,29 @@ Usage: $0 [OPTIONS] [JSON_INPUT]
 Convert JSON MCP server configuration to 'claude mcp add' command.
 
 Input can be provided as:
-  - First argument: $0 '{"name":"server","type":"http",...}'
+  - First argument: $0 '{"name":"server","url":"https://..."}'
   - stdin: echo '{"name":"server",...}' | $0
 
 Options:
   -x, --execute    Execute the command instead of printing it
   -h, --help       Show this help message
 
+Transport Type Inference:
+
+The 'type' field is optional and will be automatically inferred from the
+configuration structure if not provided:
+  - If 'command' is present and 'url' is absent → stdio transport
+  - If 'url' is present and 'command' is absent → http transport
+
+If both 'command' and 'url' are present, or neither is present, the 'type'
+field must be explicitly provided.
+
 Supported JSON Formats:
 
 Format 1 (Flat):
   {
     "name": "server-name",           (required)
-    "type": "http|sse|stdio",        (required)
+    "type": "http|sse|stdio",        (optional, can be inferred)
     "url": "https://...",            (required for http/sse)
     "command": "/path/to/cmd",       (required for stdio)
     "args": ["arg1", "arg2"],        (optional for stdio)
@@ -39,7 +49,7 @@ Format 2 (Claude Desktop config):
   {
     "mcpServers": {
       "server-name": {
-        "type": "http|sse|stdio",
+        "type": "http|sse|stdio",    (optional, can be inferred)
         "url": "https://...",        (required for http/sse)
         "command": "/path/to/cmd",   (required for stdio)
         "args": [...],               (optional for stdio)
@@ -209,6 +219,52 @@ validate_array_of_strings() {
     return 0
 }
 
+# Infer transport type from configuration structure
+#
+# When the 'type' field is not explicitly provided, this function determines the
+# transport type by examining the configuration structure:
+#
+# Inference Rules:
+#   - If 'command' is present and 'url' is absent → stdio transport
+#   - If 'url' is present and 'command' is absent → http transport (default remote)
+#   - If both 'command' and 'url' are present → ambiguous (error, requires explicit type)
+#   - If neither is present → no inference possible (error, requires explicit type)
+#
+# Parameters:
+#   $1 (config): Server configuration as JSON string
+#
+# Returns:
+#   0 and outputs inferred type on stdout if successful
+#   1 if inference fails (ambiguous or insufficient data)
+#
+infer_transport_type() {
+    local config="$1"
+
+    # Check which transport-defining fields are present
+    local has_command=$(echo "$config" | jq 'has("command")' 2>/dev/null)
+    local has_url=$(echo "$config" | jq 'has("url")' 2>/dev/null)
+
+    # Both present → ambiguous, require explicit type
+    if [ "$has_command" = "true" ] && [ "$has_url" = "true" ]; then
+        return 1
+    fi
+
+    # Only command present → stdio transport
+    if [ "$has_command" = "true" ]; then
+        echo "stdio"
+        return 0
+    fi
+
+    # Only url present → http transport (default for remote transports)
+    if [ "$has_url" = "true" ]; then
+        echo "http"
+        return 0
+    fi
+
+    # Neither present → inference failed, type required
+    return 1
+}
+
 # Function to process a single server and generate command
 #
 # This function validates a single MCP server configuration and generates the
@@ -239,7 +295,7 @@ process_server() {
     # - stdio: Local process via standard input/output
     # Source: MCP specification - transport types
     if [[ ! "$type" =~ ^(http|sse|stdio)$ ]]; then
-        echo "Error: 'type' must be one of: http, sse, stdio" >&2
+        echo "Error: 'type' must be one of: http, sse, stdio (got '$type')" >&2
         exit 1
     fi
 
@@ -475,8 +531,16 @@ if [ "$has_mcpServers" = "true" ]; then
         server_config=$(echo "$JSON_INPUT" | jq ".mcpServers[\"$name\"]")
         type=$(echo "$server_config" | jq -r '.type // empty')
 
+        # If type not explicitly provided, attempt to infer from configuration structure
         if [ -z "$type" ]; then
-            echo "Error: 'type' field is required for server '$name'" >&2
+            inferred=$(infer_transport_type "$server_config")
+            if [ $? -eq 0 ]; then
+                type="$inferred"
+            fi
+        fi
+
+        if [ -z "$type" ]; then
+            echo "Error: 'type' field is required for server '$name'. Provide 'type' explicitly, or ensure the configuration has either 'command' (for stdio) or 'url' (for http) but not both." >&2
             exit 1
         fi
 
@@ -493,8 +557,16 @@ else
         exit 1
     fi
 
+    # If type not explicitly provided, attempt to infer from configuration structure
     if [ -z "$type" ]; then
-        echo "Error: 'type' field is required" >&2
+        inferred=$(infer_transport_type "$JSON_INPUT")
+        if [ $? -eq 0 ]; then
+            type="$inferred"
+        fi
+    fi
+
+    if [ -z "$type" ]; then
+        echo "Error: 'type' field is required. Provide 'type' explicitly, or ensure the configuration has either 'command' (for stdio) or 'url' (for http) but not both." >&2
         exit 1
     fi
 

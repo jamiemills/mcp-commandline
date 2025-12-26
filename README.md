@@ -39,6 +39,35 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 ./json-to-mcp-add.sh -x < config.json
 ```
 
+## Transport Type Inference
+
+The `type` field is **optional** and will be automatically inferred from the configuration structure if not provided. This makes configurations simpler and less verbose.
+
+### Inference Rules
+
+The transport type is determined by the presence of specific fields:
+
+- **If `command` is present and `url` is absent** → `stdio` transport
+- **If `url` is present and `command` is absent** → `http` transport
+- **If both `command` and `url` are present, or neither is present** → `type` field is required
+
+### Examples
+
+```bash
+# Inferred as stdio (has command, no url)
+./json-to-mcp-add.sh '{"name":"my-server","command":"npx","args":["mcp-server"]}'
+
+# Inferred as http (has url, no command)
+./json-to-mcp-add.sh '{"name":"api-server","url":"https://api.example.com"}'
+
+# Explicit type overrides inference (has both, but type is specified)
+./json-to-mcp-add.sh '{"name":"mixed","type":"http","command":"echo","url":"https://example.com"}'
+
+# Requires explicit type (ambiguous: has both command and url)
+./json-to-mcp-add.sh '{"name":"ambiguous","command":"cmd","url":"https://example.com"}'
+# Error: 'type' field is required. Provide 'type' explicitly...
+```
+
 ## JSON Configuration Formats
 
 ### Format 1: Flat Format
@@ -46,7 +75,7 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 ```json
 {
   "name": "server-name",              // (required) Unique server identifier
-  "type": "http|sse|stdio",           // (required) Transport type
+  "type": "http|sse|stdio",           // (optional) Transport type — inferred if omitted
   "url": "https://...",               // (required for http/sse)
   "command": "/path/to/cmd",          // (required for stdio)
   "args": ["arg1", "arg2"],           // (optional for stdio) Command arguments
@@ -70,7 +99,7 @@ This format matches the `mcpServers` object from Claude Desktop's configuration:
 {
   "mcpServers": {
     "server-name": {
-      "type": "http|sse|stdio",       // (required) Transport type
+      "type": "http|sse|stdio",       // (optional) Transport type — inferred if omitted
       "url": "https://...",           // (required for http/sse)
       "command": "/path/to/cmd",      // (required for stdio)
       "args": ["arg1", "arg2"],       // (optional for stdio)
@@ -151,6 +180,49 @@ EOF
 Output:
 ```
 claude mcp add --transport stdio airtable --env AIRTABLE_API_KEY="pat_..." -- npx -y airtable-mcp-server
+```
+
+#### HTTP Server (Type Inferred)
+
+Since the configuration has `url` and no `command`, the type is automatically inferred as `http`:
+
+```bash
+./json-to-mcp-add.sh << 'EOF'
+{
+  "name": "github",
+  "url": "https://mcp.github.com/api",
+  "headers": {
+    "Authorization": "Bearer ghp_..."
+  }
+}
+EOF
+```
+
+Output:
+```
+claude mcp add --transport http github https://mcp.github.com/api --header "Authorization: Bearer ghp_..."
+```
+
+#### Stdio Server (Type Inferred)
+
+Since the configuration has `command` and no `url`, the type is automatically inferred as `stdio`:
+
+```bash
+./json-to-mcp-add.sh << 'EOF'
+{
+  "name": "local-server",
+  "command": "node",
+  "args": ["server.js"],
+  "env": {
+    "PORT": "3000"
+  }
+}
+EOF
+```
+
+Output:
+```
+claude mcp add --transport stdio local-server --env PORT="3000" -- node server.js
 ```
 
 #### SSE Server
