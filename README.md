@@ -22,13 +22,13 @@ The script accepts JSON input via stdin or as a command argument.
 
 ```bash
 # Via stdin
-echo '{"name":"myserver","type":"http","url":"https://api.example.com"}' | ./json-to-mcp-add.sh
+echo '{"name":"myserver","type":"http","url":"https://api.example.com"}' | json-to-mcp-add.sh
 
 # Via argument
-./json-to-mcp-add.sh '{"name":"myserver","type":"http","url":"https://api.example.com"}'
+json-to-mcp-add.sh '{"name":"myserver","type":"http","url":"https://api.example.com"}'
 
 # From file
-./json-to-mcp-add.sh < config.json
+json-to-mcp-add.sh < config.json
 ```
 
 ### Execute the Command
@@ -36,7 +36,7 @@ echo '{"name":"myserver","type":"http","url":"https://api.example.com"}' | ./jso
 By default, the script prints the generated command. Use `-x` or `--execute` to run it directly:
 
 ```bash
-./json-to-mcp-add.sh -x < config.json
+json-to-mcp-add.sh -x < config.json
 ```
 
 ## Transport Type Inference
@@ -55,16 +55,16 @@ The transport type is determined by the presence of specific fields:
 
 ```bash
 # Inferred as stdio (has command, no url)
-./json-to-mcp-add.sh '{"name":"my-server","command":"npx","args":["mcp-server"]}'
+json-to-mcp-add.sh '{"name":"my-server","command":"npx","args":["mcp-server"]}'
 
 # Inferred as http (has url, no command)
-./json-to-mcp-add.sh '{"name":"api-server","url":"https://api.example.com"}'
+json-to-mcp-add.sh '{"name":"api-server","url":"https://api.example.com"}'
 
 # Explicit type overrides inference (has both, but type is specified)
-./json-to-mcp-add.sh '{"name":"mixed","type":"http","command":"echo","url":"https://example.com"}'
+json-to-mcp-add.sh '{"name":"mixed","type":"http","command":"echo","url":"https://example.com"}'
 
 # Requires explicit type (ambiguous: has both command and url)
-./json-to-mcp-add.sh '{"name":"ambiguous","command":"cmd","url":"https://example.com"}'
+json-to-mcp-add.sh '{"name":"ambiguous","command":"cmd","url":"https://example.com"}'
 # Error: 'type' field is required. Provide 'type' explicitly...
 ```
 
@@ -129,7 +129,7 @@ The script automatically detects which format is being used and handles both tra
 Extract servers from a Claude Desktop config file:
 
 ```bash
-./json-to-mcp-add.sh < ~/.claude/config.json
+json-to-mcp-add.sh < ~/.claude/config.json
 ```
 
 Output:
@@ -143,7 +143,7 @@ claude mcp add --transport stdio airtable -- npx -y airtable-mcp-server
 #### HTTP Server with Authentication
 
 ```bash
-./json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh << 'EOF'
 {
   "name": "notion",
   "type": "http",
@@ -164,7 +164,7 @@ claude mcp add --transport http notion https://mcp.notion.com/mcp --header "Auth
 #### Stdio Server with Environment Variables
 
 ```bash
-./json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh << 'EOF'
 {
   "name": "airtable",
   "type": "stdio",
@@ -187,7 +187,7 @@ claude mcp add --transport stdio airtable --env AIRTABLE_API_KEY="pat_..." -- np
 Since the configuration has `url` and no `command`, the type is automatically inferred as `http`:
 
 ```bash
-./json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh << 'EOF'
 {
   "name": "github",
   "url": "https://mcp.github.com/api",
@@ -208,7 +208,7 @@ claude mcp add --transport http github https://mcp.github.com/api --header "Auth
 Since the configuration has `command` and no `url`, the type is automatically inferred as `stdio`:
 
 ```bash
-./json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh << 'EOF'
 {
   "name": "local-server",
   "command": "node",
@@ -228,7 +228,7 @@ claude mcp add --transport stdio local-server --env PORT="3000" -- node server.j
 #### SSE Server
 
 ```bash
-./json-to-mcp-add.sh '{"name":"asana","type":"sse","url":"https://mcp.asana.com/sse"}'
+json-to-mcp-add.sh '{"name":"asana","type":"sse","url":"https://mcp.asana.com/sse"}'
 ```
 
 Output:
@@ -290,22 +290,22 @@ The script validates all input against the official MCP server configuration sch
 The script validates all inputs and provides clear, actionable error messages:
 
 ```bash
-$ ./json-to-mcp-add.sh '{"name":"test"}'
+$ json-to-mcp-add.sh '{"name":"test"}'
 Error: 'type' field is required
 
-$ ./json-to-mcp-add.sh '{"name":"test","type":"http"}'
+$ json-to-mcp-add.sh '{"name":"test","type":"http"}'
 Error: 'url' field is required for http transport
 
-$ ./json-to-mcp-add.sh '{"name":"test","type":"http","url":"invalid-url"}'
+$ json-to-mcp-add.sh '{"name":"test","type":"http","url":"invalid-url"}'
 Error: Invalid URL format for 'invalid-url'. Must be valid HTTP(S) URL
 
-$ ./json-to-mcp-add.sh '{"name":"invalid.name","type":"http","url":"https://api.example.com"}'
+$ json-to-mcp-add.sh '{"name":"invalid.name","type":"http","url":"https://api.example.com"}'
 Error: Server name 'invalid.name' is invalid. Must contain only alphanumeric characters, hyphens, and underscores
 
-$ ./json-to-mcp-add.sh '{"name":"test","type":"http","url":"https://api.example.com","scope":"invalid"}'
+$ json-to-mcp-add.sh '{"name":"test","type":"http","url":"https://api.example.com","scope":"invalid"}'
 Error: 'scope' must be one of: local, project, user. Got: 'invalid'
 
-$ echo '{"name":"test","type":"stdio","command":"npx","env":{"2INVALID":"val"}}' | ./json-to-mcp-add.sh
+$ echo '{"name":"test","type":"stdio","command":"npx","env":{"2INVALID":"val"}}' | json-to-mcp-add.sh
 Error: Invalid environment variable name '2INVALID'. Must start with letter or underscore, contain only alphanumeric characters and underscores
 ```
 
@@ -340,8 +340,8 @@ To understand the schema validation details, see comments in `json-to-mcp-add.sh
 ## Help
 
 ```bash
-./json-to-mcp-add.sh -h
-./json-to-mcp-add.sh --help
+json-to-mcp-add.sh -h
+json-to-mcp-add.sh --help
 ```
 
 ## Contributing
