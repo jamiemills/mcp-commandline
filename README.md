@@ -160,9 +160,9 @@ The script automatically detects which format is being used and handles both tra
 
 ### Scope Options
 
-- `local` – Store in project-level `~/.claude.json` (default)
-- `project` – Store in repository `.mcp.json` (shared with team)
-- `user` – Store in global user configuration (cross-project)
+- `local` – User-level configuration stored in `~/.claude.json` (default) — applies across all projects for the current user
+- `project` – Repository-level configuration stored in `.mcp.json` at repository root (shared with team)
+- `user` – Global user configuration (same as `local`, for compatibility)
 
 ## Examples
 
@@ -307,13 +307,13 @@ The script validates all input against the official MCP server configuration sch
 - **Server names**: Alphanumeric characters, hyphens, and underscores only
   - Pattern: `[a-zA-Z0-9_-]+`
   - Used as configuration object keys
-- **URLs**: Must be valid HTTP(S) URLs with protocol
-  - Pattern: `https?://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}(/.*)?`
+- **URLs**: Must be valid HTTP(S) URLs with protocol (http:// or https://)
+  - Supports URLs with ports, paths, query parameters, and fragments
   - Required for http and sse transports
 - **Scope**: One of `local`, `project`, `user`
-  - `local`: Project-level configuration (~/.claude.json)
-  - `project`: Repository configuration (.mcp.json, shared with team)
-  - `user`: Global user configuration (cross-project)
+  - `local`: User-level configuration stored in `~/.claude.json` (default)
+  - `project`: Repository-level configuration stored in `.mcp.json` at repository root (shared with team)
+  - `user`: Alias for `local` (for compatibility)
 - **Environment variable names**: POSIX shell variable naming convention
   - Pattern: `[a-zA-Z_][a-zA-Z0-9_]*`
   - Must start with letter or underscore
@@ -357,9 +357,9 @@ Once you run the generated `claude mcp add` command, Claude Code performs the fo
 
 ### 1. Configuration Storage
 The server configuration is saved to the specified scope:
-- `local` → `~/.claude.json` (project-level, default)
-- `project` → `.mcp.json` (repository root, team-shared)
-- `user` → Global `~/.claude.json` (cross-project)
+- `local` → `~/.claude.json` (user-level, default) — available across all projects
+- `project` → `.mcp.json` (repository root) — team-shared configuration
+- `user` → `~/.claude.json` (same as `local`, for compatibility)
 
 ### 2. Server Initialization
 When Claude Code starts or you interact with the server, it:
@@ -399,7 +399,7 @@ EOF
 # Output: claude mcp add --transport http github https://mcp.github.com --header "Authorization: Bearer ghp_..."
 
 # What happens after (what Claude Code does)
-# 1. Stores configuration in ~/.claude.json
+# 1. Stores configuration in ~/.claude.json (user-level, available across projects)
 # 2. On next use, connects to https://mcp.github.com
 # 3. Sends InitializeRequest negotiating capabilities
 # 4. Receives InitializeResponse with available resources/tools
