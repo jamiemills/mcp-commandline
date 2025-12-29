@@ -69,19 +69,48 @@ EOF
 # Additional validation based on Claude Code MCP documentation
 #
 
-# Validate URL format (must be valid HTTP/HTTPS URL)
+# Validate URL format (must be valid HTTP/HTTPS URL per RFC 3986)
 #
 # MCP Schema Rule: HTTP and SSE transports require a valid HTTPS or HTTP URL
-# This validation checks:
-#   - Protocol: http:// or https:// (required)
-#   - URL format: basic structure validation
-#   - Supports: URLs with ports, paths, query parameters, and fragments
+# This validation enforces RFC 3986 generic URI syntax with these rules:
+#   - Scheme: http:// or https:// (required)
+#   - Host: domain name (RFC 1035), IPv4, IPv6 (RFC 3986), or localhost
+#   - Port: optional decimal digits (1-5 characters)
+#   - Path/Query/Fragment: optional after hostname
+#   - Rejects: protocol-only URLs, wrong protocols, malformed addresses
 #
+# Host Format Support:
+#   - Domain names: labels with alphanumeric and hyphens, hyphens not at start/end
+#   - IPv4: dotted-decimal with octets 0-255
+#   - IPv6: hexadecimal groups in brackets per RFC 3986
+#   - Localhost: special case for local development
+#
+# Examples accepted:
+#   https://api.example.com
+#   https://api.example.com:3000
+#   https://api.example.com/path?key=value#section
+#   https://192.168.1.1
+#   https://localhost:3000
+#   https://[2001:db8::1]:8080
+#
+# Source: RFC 3986 - Uniform Resource Identifier (URI) Generic Syntax
 # Source: MCP specification 2025-11-25 - HTTP/SSE transport requirements
 validate_url() {
     local url="$1"
-    # Simple protocol check: must start with http:// or https://
-    if [[ ! "$url" =~ ^https?:// ]]; then
+    # RFC 3986 compliant URL regex supporting domains, IPv4, IPv6, and localhost
+    # Pattern breakdown:
+    #   https?://           - Protocol (http:// or https://)
+    #   (host)              - Host can be one of:
+    #                         - Domain: ([a-zA-Z0-9]..\.)*[a-zA-Z0-9]... (RFC 1035 labels)
+    #                         - IPv6: \[...\] (hexadecimal groups in brackets)
+    #                         - IPv4: dotted-decimal with octets 0-255
+    #                         - localhost: special case
+    #   (:[0-9]{1,5})?      - Optional port
+    #   (/[^\s]*)?          - Optional path/query/fragment
+    #   $                   - End of string
+    local url_regex='^https?://(([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?|\[([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]|localhost|127\.0\.0\.1|([0-9]{1,3}\.){3}[0-9]{1,3})(:[0-9]{1,5})?(/.*)?$'
+
+    if [[ ! "$url" =~ $url_regex ]]; then
         return 1
     fi
     return 0

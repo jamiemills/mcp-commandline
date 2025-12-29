@@ -307,8 +307,13 @@ The script validates all input against the official MCP server configuration sch
 - **Server names**: Alphanumeric characters, hyphens, and underscores only
   - Pattern: `[a-zA-Z0-9_-]+`
   - Used as configuration object keys
-- **URLs**: Must be valid HTTP(S) URLs with protocol (http:// or https://)
-  - Supports URLs with ports, paths, query parameters, and fragments
+- **URLs**: Must be valid HTTP(S) URLs per RFC 3986 specification
+  - Format: `http[s]://host[:port][/path][?query][#fragment]`
+  - Host can be: domain name, IPv4 address, IPv6 address (in brackets), or localhost
+  - Port is optional (decimal digits 1-5)
+  - Path, query parameters, and fragments are optional
+  - Domain labels must start and end with alphanumeric, can contain hyphens
+  - Examples: `https://api.example.com:3000/path?key=value#section`, `https://192.168.1.1:8080`
   - Required for http and sse transports
 - **Scope**: One of `local`, `project`, `user`
   - `local`: User-level configuration stored in `~/.claude.json` (default)
