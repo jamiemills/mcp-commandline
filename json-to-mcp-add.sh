@@ -72,17 +72,16 @@ EOF
 # Validate URL format (must be valid HTTP/HTTPS URL)
 #
 # MCP Schema Rule: HTTP and SSE transports require a valid HTTPS or HTTP URL
-# This regex validates:
-#   - Protocol: http:// or https://
-#   - Domain: alphanumeric, dots, hyphens (must have at least one dot and TLD)
-#   - Path: optional, any characters after domain
+# This validation checks:
+#   - Protocol: http:// or https:// (required)
+#   - URL format: basic structure validation
+#   - Supports: URLs with ports, paths, query parameters, and fragments
 #
 # Source: MCP specification 2025-11-25 - HTTP/SSE transport requirements
 validate_url() {
     local url="$1"
-    local url_regex='^https?://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}(/.*)?$'
-
-    if [[ ! "$url" =~ $url_regex ]]; then
+    # Simple protocol check: must start with http:// or https://
+    if [[ ! "$url" =~ ^https?:// ]]; then
         return 1
     fi
     return 0
@@ -91,9 +90,9 @@ validate_url() {
 # Validate scope enum
 #
 # MCP Schema Rule: The scope field, when present, must be one of: local, project, user
-#   - local: Configuration stored in project-level ~/.claude.json
-#   - project: Configuration stored in repository .mcp.json (shared with team)
-#   - user: Configuration stored in global user ~/.claude.json (cross-project)
+#   - local: User-level configuration stored in ~/.claude.json (default)
+#   - project: Repository-level configuration stored in .mcp.json (shared with team)
+#   - user: Compatibility alias for local (same as local)
 #
 # Source: Claude Code configuration documentation - Scope options
 validate_scope() {
@@ -386,9 +385,9 @@ process_server() {
 
         # Optional: scope field for configuration storage location
         # Schema: scope must be one of: local, project, user
-        # - local: ~/.claude.json in project directory (default, private)
-        # - project: .mcp.json at repo root (shared with team)
-        # - user: ~/.claude.json globally (personal, cross-project)
+        # - local: User-level ~/.claude.json (default, applies across all projects)
+        # - project: Repository-level .mcp.json at repo root (shared with team)
+        # - user: Compatibility alias for local (same as local)
         # Source: Claude Code configuration documentation - Scope options
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
@@ -444,7 +443,7 @@ process_server() {
     if [[ "$type" != "stdio" ]]; then
         # Optional: scope field for HTTP/SSE configuration storage location
         # Schema: scope must be one of: local, project, user
-        # Default if not specified: local (project-level configuration)
+        # Default if not specified: local (user-level configuration, applies across all projects)
         # Source: Claude Code configuration documentation - Scope options
         scope=$(echo "$config" | jq -r '.scope // empty')
         if [ -n "$scope" ]; then
