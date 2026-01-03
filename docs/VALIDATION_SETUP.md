@@ -51,12 +51,12 @@ All shell script validations passed!
 
 ### Layer 2: Manual Validation Script
 
-**Location:** `./validate.sh`
+**Location:** `./scripts/validate.sh`
 
 Run this script before pushing to ensure everything passes validation:
 
 ```bash
-./validate.sh
+./scripts/validate.sh
 ```
 
 **What it does:**
@@ -173,7 +173,7 @@ rm .git/hooks/pre-commit
 nano json-to-mcp-add.sh
 
 # 2. Validate before committing (optional, hook will run)
-./validate.sh
+./scripts/validate.sh
 
 # 3. Stage and commit
 git add json-to-mcp-add.sh
@@ -183,7 +183,7 @@ git commit -m "Fix: improve validation logic"
 #    If validation fails, commit is blocked and you get error messages
 
 # 5. Fix issues if needed
-./validate.sh  # See all issues
+./scripts/validate.sh  # See all issues
 shfmt -w json-to-mcp-add.sh  # Auto-fix formatting
 shellcheck json-to-mcp-add.sh  # Check for remaining issues
 
@@ -199,7 +199,7 @@ git push origin main
 
 ```bash
 # Run full validation
-./validate.sh
+./scripts/validate.sh
 
 # If all pass, you're ready to push
 git push origin main
@@ -252,7 +252,7 @@ shfmt -d json-to-mcp-add.sh tests/*.sh
 ./tests/run_all_tests.sh
 
 # Run everything at once
-./validate.sh
+./scripts/validate.sh
 ```
 
 ### CI/CD Status
@@ -297,7 +297,7 @@ go install mvdan.cc/sh/v3/cmd/shfmt@latest  # Linux/other
 3. Verify git is configured: `git config --list | grep hook`
 
 ### Can't commit despite passing validation locally
-1. Run `./validate.sh` to double-check
+1. Run `./scripts/validate.sh` to double-check
 2. Check if you're committing only shell script changes
 3. The hook only checks staged files - ensure your changes are staged
 
@@ -310,7 +310,7 @@ git commit --no-verify -m "message"
 
 ## See Also
 
-- `TESTING.md` - Test suite documentation
-- `TEST_REPORT.md` - Detailed test results
+- `docs/TESTING.md` - Test suite documentation
+- `docs/TEST_REPORT.md` - Detailed test results
 - `.github/workflows/validate.yml` - CI/CD configuration
 - `.git/hooks/pre-commit` - Pre-commit hook implementation

@@ -40,7 +40,7 @@ All test files are saved in: `/Users/jamiemills/Projects/code/mcp-commandline/te
 
 ## Reports
 
-- **`TEST_REPORT.md`** - Comprehensive test report
+- **`docs/TEST_REPORT.md`** - Comprehensive test report
   - Full test results
   - Feature testing summary
   - Code quality analysis
@@ -260,5 +260,5 @@ shfmt -d json-to-mcp-add.sh
 ## See Also
 
 - `README.md` - Main project documentation
-- `TEST_REPORT.md` - Detailed test report
+- `docs/TEST_REPORT.md` - Detailed test report
 - `tests/README.md` - Test suite documentation
