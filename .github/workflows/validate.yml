@@ -1,0 +1,63 @@
+name: Shell Script Validation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '**.sh'
+      - '.github/workflows/validate.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**.sh'
+      - '.github/workflows/validate.yml'
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          echo "Running shellcheck on shell scripts..."
+          shellcheck json-to-mcp-add.sh tests/*.sh
+          echo "✓ All shellcheck validations passed"
+
+  shfmt:
+    name: ShellFmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shfmt
+        run: |
+          GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Check formatting
+        run: |
+          echo "Running shfmt..."
+          shfmt -d json-to-mcp-add.sh tests/*.sh
+          echo "✓ All shfmt checks passed"
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: [shellcheck, shfmt]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Run test suite
+        run: |
+          chmod +x tests/run_all_tests.sh
+          ./tests/run_all_tests.sh

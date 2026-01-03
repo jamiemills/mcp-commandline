@@ -1,10 +1,10 @@
 # mcp-commandline
 
-A shell script that converts JSON MCP server configuration into `claude mcp add` command-line calls.
+A shell script that converts JSON MCP server configuration into MCP CLI commands for Claude Code or Sourcegraph Amp.
 
 ## Overview
 
-This script simplifies adding Model Context Protocol (MCP) servers to Claude Code by accepting JSON configuration and generating the appropriate `claude mcp add` command. It handles all three transport types: HTTP, SSE, and stdio.
+This script simplifies adding Model Context Protocol (MCP) servers to your preferred CLI tool by accepting JSON configuration and generating the appropriate MCP command. It handles all three transport types: HTTP, SSE, and stdio. Supports both Claude Code (`claude mcp add`) and Sourcegraph Amp (`amp mcp add`).
 
 ## Installation
 
@@ -17,6 +17,33 @@ chmod +x json-to-mcp-add.sh
 ## Usage
 
 The script accepts JSON input via stdin or as a command argument.
+
+### CLI Selection
+
+Use the `--cli` option to specify your target platform:
+
+```bash
+# Generate Claude Code command (default if not specified or saved)
+json-to-mcp-add.sh --cli claude '{"name":"myserver","url":"https://api.example.com"}'
+# Output: claude mcp add --transport http myserver https://api.example.com
+
+# Generate Sourcegraph Amp command
+json-to-mcp-add.sh --cli amp '{"name":"myserver","url":"https://api.example.com"}'
+# Output: amp mcp add --transport http myserver https://api.example.com
+```
+
+**Preference Persistence:** Your CLI choice is automatically saved to `~/.config/mcp-commandline/config` (or `~/.mcp-commandline-config` as fallback). Once you specify a CLI preference, you don't need to include `--cli` on subsequent invocations—it will use your saved preference.
+
+```bash
+# First use - save preference
+json-to-mcp-add.sh --cli amp '{"name":"server","url":"https://..."}'
+
+# Subsequent uses - uses saved preference (amp)
+json-to-mcp-add.sh '{"name":"server2","url":"https://..."}'
+
+# Override saved preference
+json-to-mcp-add.sh --cli claude '{"name":"server3","url":"https://..."}'
+```
 
 ### Basic Usage
 
@@ -37,6 +64,7 @@ By default, the script prints the generated command. Use `-x` or `--execute` to 
 
 ```bash
 json-to-mcp-add.sh -x < config.json
+json-to-mcp-add.sh --cli amp -x < config.json
 ```
 
 ## Understanding MCP Communication Layers
@@ -44,7 +72,7 @@ json-to-mcp-add.sh -x < config.json
 When you configure an MCP server with this script, you're participating in a layered communication system. Understanding these layers helps you know what this tool does and what happens after:
 
 ### Layer 1: Transport Layer (This Script's Responsibility)
-**Where and how to connect** — The script validates your configuration and generates the `claude mcp add` command that tells Claude Code:
+**Where and how to connect** — The script validates your configuration and generates the appropriate MCP command (`claude mcp add` or `amp mcp add`) that tells your CLI tool:
 - Which protocol to use (stdio, HTTP, or SSE)
 - Where the server is located (command path or URL)
 - How to authenticate (headers for HTTP/SSE, environment variables for stdio)
@@ -168,10 +196,10 @@ The script automatically detects which format is being used and handles both tra
 
 ### Claude Desktop Config Format
 
-Extract servers from a Claude Desktop config file:
+Extract servers from a Claude Desktop config file for Claude Code:
 
 ```bash
-json-to-mcp-add.sh < ~/.claude/config.json
+json-to-mcp-add.sh --cli claude < ~/.claude/config.json
 ```
 
 Output:
@@ -180,12 +208,24 @@ claude mcp add --transport http notion https://mcp.notion.com/mcp --header "Auth
 claude mcp add --transport stdio airtable -- npx -y airtable-mcp-server
 ```
 
-### Flat Format
-
-#### HTTP Server with Authentication
+Or for Sourcegraph Amp:
 
 ```bash
-json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh --cli amp < ~/.claude/config.json
+```
+
+Output:
+```
+amp mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer token"
+amp mcp add --transport stdio airtable -- npx -y airtable-mcp-server
+```
+
+### Flat Format
+
+#### HTTP Server with Authentication (Claude Code)
+
+```bash
+json-to-mcp-add.sh --cli claude << 'EOF'
 {
   "name": "notion",
   "type": "http",
@@ -203,10 +243,30 @@ Output:
 claude mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer sk_live_..." --scope project
 ```
 
+#### HTTP Server with Authentication (Sourcegraph Amp)
+
+```bash
+json-to-mcp-add.sh --cli amp << 'EOF'
+{
+  "name": "notion",
+  "type": "http",
+  "url": "https://mcp.notion.com/mcp",
+  "headers": {
+    "Authorization": "Bearer sk_live_..."
+  }
+}
+EOF
+```
+
+Output:
+```
+amp mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer sk_live_..."
+```
+
 #### Stdio Server with Environment Variables
 
 ```bash
-json-to-mcp-add.sh << 'EOF'
+json-to-mcp-add.sh --cli claude << 'EOF'
 {
   "name": "airtable",
   "type": "stdio",
@@ -222,6 +282,27 @@ EOF
 Output:
 ```
 claude mcp add --transport stdio airtable --env AIRTABLE_API_KEY="pat_..." -- npx -y airtable-mcp-server
+```
+
+Or for Amp:
+
+```bash
+json-to-mcp-add.sh --cli amp << 'EOF'
+{
+  "name": "postgres",
+  "type": "stdio",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-postgres"],
+  "env": {
+    "PGUSER": "admin"
+  }
+}
+EOF
+```
+
+Output:
+```
+amp mcp add --transport stdio postgres --env PGUSER="admin" -- npx -y @modelcontextprotocol/server-postgres
 ```
 
 #### HTTP Server (Type Inferred)
