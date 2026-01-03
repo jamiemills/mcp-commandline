@@ -122,17 +122,19 @@ test_invalid_cli_type() {
 }
 
 # Test 9: Claude with stdio and env vars
+# Note: Per Spec 07, env vars are appended after command and args
 test_claude_stdio() {
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" --cli claude '{"name":"postgres","command":"npx","args":["@mcp/server"],"env":{"PGUSER":"admin"}}')
-	[[ "$output" == "claude mcp add --transport stdio postgres --env PGUSER=\"admin\" -- npx @mcp/server" ]]
+	[[ "$output" == "claude mcp add --transport stdio postgres -- npx @mcp/server PGUSER=\"admin\"" ]]
 }
 
 # Test 10: Amp with HTTP and headers
+# Note: Amp uses equals format (Key=Value) per Spec 03
 test_amp_headers() {
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" --cli amp '{"name":"api","url":"https://api.example.com","headers":{"Authorization":"Bearer token"}}')
-	[[ "$output" == "amp mcp add api https://api.example.com --header \"Authorization: Bearer token\"" ]]
+	[[ "$output" == "amp mcp add api https://api.example.com --header \"Authorization=Bearer token\"" ]]
 }
 
 # Test 11: Multiple headers

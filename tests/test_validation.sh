@@ -136,10 +136,11 @@ test_invalid_env_var_digit() {
 }
 
 # Test 17: Valid env var name (starts with underscore)
+# Note: Per Spec 07, env vars are appended as KEY="value" after args
 test_valid_env_var_underscore() {
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" --cli claude '{"name":"test","command":"npx","env":{"_VAR":"value"}}')
-	[[ "$output" == *"--env _VAR=\"value\""* ]]
+	[[ "$output" == *"_VAR=\"value\""* ]]
 }
 
 # Test 18: Invalid scope value

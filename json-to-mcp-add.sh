@@ -81,12 +81,18 @@ EOF
 	exit 1
 }
 
-# Validation functions
+# ==============================================================================
+# Validation Framework (Spec 01)
+# ==============================================================================
 #
 # These functions validate MCP server configurations against the official MCP schema.
 # Schema source: https://modelcontextprotocol.io/specification/2025-11-25
-# Additional validation based on Claude Code MCP documentation
+# Claude Code docs: https://code.claude.com/docs/en/mcp
+# Amp docs: https://ampcode.com/manual#mcp
 #
+
+# List of known valid fields for unknown field detection
+KNOWN_FIELDS=("name" "url" "command" "type" "headers" "args" "env" "scope" "includeTools")
 
 # Validate URL format (must be valid HTTP/HTTPS URL per RFC 3986)
 #
@@ -94,9 +100,9 @@ EOF
 # This validation enforces RFC 3986 generic URI syntax with these rules:
 #   - Scheme: http:// or https:// (required)
 #   - Host: domain name (RFC 1035), IPv4, IPv6 (RFC 3986), or localhost
-#   - Port: optional decimal digits (1-5 characters)
+#   - Port: optional decimal digits (1-5 characters), valid range 1-65535
 #   - Path/Query/Fragment: optional after hostname
-#   - Rejects: protocol-only URLs, wrong protocols, malformed addresses
+#   - Rejects: protocol-only URLs, wrong protocols, malformed addresses, spaces
 #
 # Host Format Support:
 #   - Domain names: labels with alphanumeric and hyphens, hyphens not at start/end
@@ -116,6 +122,17 @@ EOF
 # Source: MCP specification 2025-11-25 - HTTP/SSE transport requirements
 validate_url() {
 	local url="$1"
+
+	# Empty URL is invalid
+	if [ -z "$url" ]; then
+		return 1
+	fi
+
+	# Check for spaces (not allowed in URLs)
+	if [[ "$url" =~ [[:space:]] ]]; then
+		return 1
+	fi
+
 	# RFC 3986 compliant URL regex supporting domains, IPv4, IPv6, and localhost
 	# Pattern breakdown:
 	#   https?://           - Protocol (http:// or https://)
@@ -132,6 +149,23 @@ validate_url() {
 	if [[ ! "$url" =~ $url_regex ]]; then
 		return 1
 	fi
+
+	# Additional port validation - check if port is in valid range (1-65535)
+	if [[ "$url" =~ :([0-9]+)(\/|$) ]]; then
+		local port="${BASH_REMATCH[1]}"
+		if [ "$port" -gt 65535 ] || [ "$port" -eq 0 ]; then
+			return 1
+		fi
+	fi
+
+	# Check for empty port (colon with no number)
+	if [[ "$url" =~ :/[^/] ]] || [[ "$url" =~ :$ ]] || [[ "$url" =~ ://[^/]+:(/|$) ]]; then
+		# This catches patterns like "http://example.com:" or "http://example.com:/"
+		if [[ "$url" =~ ://[^/]+:(/|$) ]]; then
+			return 1
+		fi
+	fi
+
 	return 0
 }
 
@@ -249,24 +283,599 @@ validate_is_array() {
 #   - Each array element is a string (not number, boolean, null, or object)
 #   - Arguments can be properly passed to the command
 #
-# Note: Numbers in args will be converted to strings by jq, but null values
-# or complex objects are invalid and caught by this validation.
+# Note: Must validate actual JSON types, not just null values.
 #
 # Source: MCP stdio transport specification - args field definition
 validate_array_of_strings() {
 	local array="$1"
-	local count
-	count=$(echo "$array" | jq 'length')
 
+	# First validate it's an array
+	if ! validate_is_array "$array"; then
+		return 1
+	fi
+
+	# Check each element is a string type
+	local non_string_count
+	non_string_count=$(echo "$array" | jq '[.[] | type != "string"] | any' 2>/dev/null)
+	if [ "$non_string_count" = "true" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Validate transport type
+#
+# MCP Schema Rule: Transport type must be one of the supported values
+# Supported types:
+#   - http: Standard HTTP transport (recommended for remote servers)
+#   - sse: Server-Sent Events (deprecated as of MCP 2025-03-26, use http)
+#   - stdio: Local process via standard input/output
+#
+# Source: MCP specification - transport types
+validate_transport_type() {
+	local transport="$1"
+
+	# Empty is invalid
+	if [ -z "$transport" ]; then
+		return 1
+	fi
+
+	# Must be one of the valid types
+	if [[ ! "$transport" =~ ^(http|sse|stdio)$ ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Validate header key
+#
+# HTTP header keys must follow RFC 7230 token rules:
+#   - Cannot be empty
+#   - Can contain: alphanumeric, hyphen, and certain special characters
+#   - Cannot contain: space, tab, colon, comma, double quote
+#
+# Source: RFC 7230 - HTTP/1.1 Message Syntax and Routing
+validate_header_key() {
+	local key="$1"
+
+	# Empty key is invalid
+	if [ -z "$key" ]; then
+		return 1
+	fi
+
+	# Cannot contain space, tab, colon, comma, double quote, or control characters
+	if [[ "$key" =~ [[:space:]:|,\"] ]]; then
+		return 1
+	fi
+
+	# Must match allowed characters: alphanumeric + allowed special chars
+	# Allowed: ! # $ % & ' * + . ^ _ ` | ~ -
+	if [[ ! "$key" =~ ^[a-zA-Z0-9!#\$%\&\'*+.\^_\`\|~-]+$ ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Validate headers JSON object
+#
+# Headers must be a JSON object where all values are strings
+#
+# Source: MCP specification - HTTP transport headers
+validate_headers() {
+	local headers_json="$1"
+
+	# Empty or null is invalid (caller should check if headers exist first)
+	if [ -z "$headers_json" ] || [ "$headers_json" = "null" ]; then
+		return 1
+	fi
+
+	# Must be valid JSON
+	if ! echo "$headers_json" | jq empty 2>/dev/null; then
+		return 1
+	fi
+
+	# Must be an object
+	local json_type
+	json_type=$(echo "$headers_json" | jq -r 'type' 2>/dev/null)
+	if [ "$json_type" != "object" ]; then
+		return 1
+	fi
+
+	# All values must be strings
+	local has_non_string
+	has_non_string=$(echo "$headers_json" | jq '[.[] | type != "string"] | any' 2>/dev/null)
+	if [ "$has_non_string" = "true" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Check if a field name is recognized
+#
+# Returns exit code 0 if field is known, 1 if unknown
+# For unknown fields, outputs a warning to stderr but does NOT fail
+#
+# Source: Spec 01 - Unknown field handling
+validate_unknown_field() {
+	local field_name="$1"
+
+	# Check if field is in the known list
+	for known in "${KNOWN_FIELDS[@]}"; do
+		if [ "$field_name" = "$known" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# Find closest match for unknown field (typo detection)
+#
+# Uses simple substring matching to suggest corrections
+# Returns the closest field name or empty string
+find_closest_field() {
+	local unknown="$1"
+	local best_match=""
+	local best_score=0
+
+	for known in "${KNOWN_FIELDS[@]}"; do
+		# Simple scoring: count matching characters
+		local score=0
+		local len=${#unknown}
+		for ((i = 0; i < len; i++)); do
+			local char="${unknown:$i:1}"
+			if [[ "$known" == *"$char"* ]]; then
+				((score++))
+			fi
+		done
+
+		# Bonus for similar length
+		local len_diff=$((${#known} - ${#unknown}))
+		if [ $len_diff -lt 0 ]; then
+			len_diff=$((-len_diff))
+		fi
+		if [ $len_diff -le 2 ]; then
+			((score += 2))
+		fi
+
+		# Bonus for same first letter
+		if [ "${known:0:1}" = "${unknown:0:1}" ]; then
+			((score += 3))
+		fi
+
+		if [ $score -gt $best_score ]; then
+			best_score=$score
+			best_match="$known"
+		fi
+	done
+
+	# Only suggest if score is reasonable (at least half the characters match)
+	local threshold=$((${#unknown} / 2 + 2))
+	if [ $best_score -ge $threshold ]; then
+		echo "$best_match"
+	fi
+}
+
+# Warn about unknown fields in configuration
+#
+# Outputs warning to stderr but allows processing to continue (exit 0)
+# Per Spec 08: Unknown fields generate warnings, not errors
+warn_unknown_fields() {
+	local config="$1"
+
+	# Get all field names from the config
+	local fields
+	fields=$(echo "$config" | jq -r 'keys[]' 2>/dev/null)
+
+	while IFS= read -r field; do
+		if [ -n "$field" ] && ! validate_unknown_field "$field"; then
+			echo "Warning: Unknown field '$field' in configuration" >&2
+			echo "Valid fields: ${KNOWN_FIELDS[*]}" >&2
+
+			local suggestion
+			suggestion=$(find_closest_field "$field")
+			if [ -n "$suggestion" ]; then
+				echo "Did you mean: $suggestion" >&2
+			fi
+			echo "" >&2
+		fi
+	done <<<"$fields"
+}
+
+# ==============================================================================
+# Scope Validation Functions (Spec 04)
+# ==============================================================================
+
+# Validate scope for Claude Code
+#
+# Claude Code supports scope with values: local, project, user
+# Case-sensitive (lowercase only)
+validate_scope_for_claude() {
+	local scope="$1"
+
+	# Empty scope is valid (means "don't include scope flag")
+	if [ -z "$scope" ]; then
+		return 0
+	fi
+
+	# Must be one of the valid values (case-sensitive)
+	if [[ ! "$scope" =~ ^(local|project|user)$ ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Reject scope for Amp
+#
+# Amp does NOT support scope field - always uses global amp.mcpServers
+# If scope is provided, returns error with helpful message
+reject_scope_for_amp() {
+	local scope="$1"
+
+	# Empty scope is OK - no action needed
+	if [ -z "$scope" ]; then
+		return 0
+	fi
+
+	# Any scope value for Amp is an error
+	cat >&2 <<EOF
+Error: 'scope' field is not supported by Amp
+
+Reason: Amp stores all MCP server configurations in 'amp.mcpServers' and does not support per-scope organization like Claude Code does.
+
+Solution: Remove the 'scope' field from your configuration. If you're migrating from Claude Code to Amp, simply omit this field.
+
+For more information, see:
+- Amp Documentation: https://ampcode.com/manual#mcp
+- Claude Code Documentation: https://code.claude.com/docs/en/mcp
+EOF
+	return 1
+}
+
+# Generate scope flag for CLI command
+#
+# Returns --scope <value> for Claude Code when scope is provided
+# Returns empty string for Amp or when no scope
+generate_scope_flag() {
+	local scope="$1"
+	local cli_type="$2"
+
+	# No scope provided - no flag
+	if [ -z "$scope" ]; then
+		echo ""
+		return 0
+	fi
+
+	# Amp doesn't support scope (should have been rejected earlier)
+	if [ "$cli_type" = "amp" ]; then
+		echo ""
+		return 0
+	fi
+
+	# Claude Code - return the flag
+	echo "--scope $scope"
+	return 0
+}
+
+# ==============================================================================
+# includeTools Validation (Spec 05) - Amp Only
+# ==============================================================================
+
+# Validate a single glob pattern
+#
+# Valid patterns can contain:
+#   - Alphanumeric characters, underscores, hyphens
+#   - Wildcards: * (any sequence), ? (single char)
+#   - Character classes: [abc], [!abc], [a-z]
+#
+# Invalid patterns:
+#   - Empty string
+#   - Brace expansion: {a,b}
+#   - Recursive wildcard: **
+#   - Unclosed brackets
+validate_glob_pattern() {
+	local pattern="$1"
+
+	# Empty pattern is invalid
+	if [ -z "$pattern" ]; then
+		return 1
+	fi
+
+	# Check for brace expansion (not supported)
+	if [[ "$pattern" == *"{"* ]] || [[ "$pattern" == *"}"* ]]; then
+		echo "brace expansion not supported" >&2
+		return 1
+	fi
+
+	# Check for recursive wildcard (not supported)
+	if [[ "$pattern" == *"**"* ]]; then
+		echo "recursive wildcard not supported" >&2
+		return 1
+	fi
+
+	# Check for unclosed brackets
+	local open_count="${pattern//[^\[]/}"
+	local close_count="${pattern//[^\]]/}"
+	if [ ${#open_count} -ne ${#close_count} ]; then
+		echo "unclosed bracket" >&2
+		return 1
+	fi
+
+	return 0
+}
+
+# Validate includeTools array
+#
+# Must be an array of valid glob pattern strings
+# Only valid for stdio transport
+validate_includeTools() {
+	local include_tools_json="$1"
+
+	# Empty or null is valid (means field not provided)
+	if [ -z "$include_tools_json" ] || [ "$include_tools_json" = "null" ]; then
+		return 0
+	fi
+
+	# Must be an array
+	if ! validate_is_array "$include_tools_json"; then
+		echo "Error: 'includeTools' must be an array of strings" >&2
+		return 1
+	fi
+
+	# All elements must be strings
+	if ! validate_array_of_strings "$include_tools_json"; then
+		echo "Error: 'includeTools' array must contain only strings" >&2
+		return 1
+	fi
+
+	# Validate each pattern
+	local count
+	count=$(echo "$include_tools_json" | jq 'length')
 	for ((i = 0; i < count; i++)); do
-		local element
-		element=$(echo "$array" | jq -r ".[$i]")
-		if [ "$element" = "null" ]; then
+		local pattern
+		pattern=$(echo "$include_tools_json" | jq -r ".[$i]")
+		if ! validate_glob_pattern "$pattern" 2>/dev/null; then
+			local reason
+			reason=$(validate_glob_pattern "$pattern" 2>&1)
+			echo "Error: Invalid glob pattern '$pattern': $reason" >&2
 			return 1
 		fi
 	done
+
 	return 0
 }
+
+# Validate includeTools for transport type
+#
+# includeTools is only valid for stdio transport
+validate_includeTools_for_transport() {
+	local include_tools_json="$1"
+	local transport="$2"
+
+	# If includeTools not provided, always valid
+	if [ -z "$include_tools_json" ] || [ "$include_tools_json" = "null" ]; then
+		return 0
+	fi
+
+	# Only valid for stdio transport
+	if [ "$transport" != "stdio" ]; then
+		cat >&2 <<EOF
+Error: 'includeTools' is only valid for stdio transport, not $transport
+
+Reason: includeTools filters tools from local MCP servers. Remote HTTP/SSE servers expose fixed tool sets.
+
+Solution: Remove 'includeTools' field or change transport to stdio
+EOF
+		return 1
+	fi
+
+	return 0
+}
+
+# ==============================================================================
+# Header Formatting Functions (Spec 03)
+# ==============================================================================
+
+# Escape special characters in header values for shell safety
+#
+# Escapes: backslashes, double quotes, dollar signs
+escape_header_value() {
+	local value="$1"
+
+	# Escape backslashes first (must be done first to avoid double escaping)
+	value="${value//\\/\\\\}"
+
+	# Escape double quotes
+	value="${value//\"/\\\"}"
+
+	# Escape dollar signs to prevent shell expansion
+	value="${value//\$/\\\$}"
+
+	echo "$value"
+}
+
+# Format headers for Claude Code CLI
+#
+# Claude Code uses colon-space separator: --header "Key: Value"
+# Each header is output on a separate line
+format_headers_claude() {
+	local headers_json="$1"
+
+	# Empty headers - no output
+	if [ -z "$headers_json" ] || [ "$headers_json" = "{}" ] || [ "$headers_json" = "null" ]; then
+		return 0
+	fi
+
+	# Iterate through each header
+	while IFS= read -r line; do
+		local key
+		local value
+		key=$(echo "$line" | jq -r '.key')
+		value=$(echo "$line" | jq -r '.value')
+
+		# Escape special characters in value
+		local escaped_value
+		escaped_value=$(escape_header_value "$value")
+
+		# Claude format: --header "Key: Value" (colon with space)
+		echo "--header \"$key: $escaped_value\""
+	done < <(echo "$headers_json" | jq -c 'to_entries[]' 2>/dev/null)
+}
+
+# Format headers for Amp CLI
+#
+# Amp uses equals separator: --header "Key=Value"
+# Each header is output on a separate line
+format_headers_amp() {
+	local headers_json="$1"
+
+	# Empty headers - no output
+	if [ -z "$headers_json" ] || [ "$headers_json" = "{}" ] || [ "$headers_json" = "null" ]; then
+		return 0
+	fi
+
+	# Iterate through each header
+	while IFS= read -r line; do
+		local key
+		local value
+		key=$(echo "$line" | jq -r '.key')
+		value=$(echo "$line" | jq -r '.value')
+
+		# Escape special characters in value
+		local escaped_value
+		escaped_value=$(escape_header_value "$value")
+
+		# Amp format: --header "Key=Value" (equals, no space)
+		echo "--header \"$key=$escaped_value\""
+	done < <(echo "$headers_json" | jq -c 'to_entries[]' 2>/dev/null)
+}
+
+# Format headers for the specified CLI type
+#
+# Routes to the appropriate formatting function based on CLI type
+format_headers() {
+	local headers_json="$1"
+	local cli_type="$2"
+
+	case "$cli_type" in
+	claude)
+		format_headers_claude "$headers_json"
+		;;
+	amp)
+		format_headers_amp "$headers_json"
+		;;
+	*)
+		echo "Error: Invalid CLI type '$cli_type' for header formatting" >&2
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+# ==============================================================================
+# Transport Handling Functions (Spec 02)
+# ==============================================================================
+
+# Validate transport type is supported by the specified CLI
+#
+# Both Claude Code and Amp support all three transport types
+# The difference is how they handle them:
+#   - Claude Code: Requires explicit --transport flag
+#   - Amp: Auto-detects from server response
+validate_transport_for_cli() {
+	local transport="$1"
+	local cli_type="$2"
+
+	# First validate transport type itself
+	if ! validate_transport_type "$transport"; then
+		return 1
+	fi
+
+	# Validate CLI type
+	if [[ ! "$cli_type" =~ ^(claude|amp)$ ]]; then
+		return 1
+	fi
+
+	# Both CLIs support all three transports
+	return 0
+}
+
+# Generate transport flag for CLI command
+#
+# Claude Code: returns "--transport <type>"
+# Amp: returns empty string (no flag needed, auto-detection)
+generate_transport_flag() {
+	local transport="$1"
+	local cli_type="$2"
+
+	case "$cli_type" in
+	claude)
+		echo "--transport $transport"
+		;;
+	amp)
+		# Amp auto-detects transport, no flag needed
+		echo ""
+		;;
+	*)
+		echo ""
+		;;
+	esac
+}
+
+# ==============================================================================
+# CLI Routing Functions (Spec 06)
+# ==============================================================================
+
+# Determine the active CLI type
+#
+# Priority: flag > saved preference > default (claude)
+determine_cli_type() {
+	local cli_from_flag="$1"
+	local saved_preference="$2"
+
+	# Flag takes priority
+	if [ -n "$cli_from_flag" ]; then
+		echo "$cli_from_flag"
+		return 0
+	fi
+
+	# Use saved preference if available
+	if [ -n "$saved_preference" ]; then
+		echo "$saved_preference"
+		return 0
+	fi
+
+	# Default to claude
+	echo "claude"
+	return 0
+}
+
+# Validate CLI type is supported
+validate_cli_type() {
+	local cli_type="$1"
+
+	# Empty is invalid
+	if [ -z "$cli_type" ]; then
+		return 1
+	fi
+
+	# Must be one of the supported types
+	if [[ ! "$cli_type" =~ ^(claude|amp)$ ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# ==============================================================================
+# CLI Preference Management
+# ==============================================================================
 
 # Load CLI preference from config file
 #
@@ -427,6 +1036,31 @@ get_cli_command() {
 	esac
 }
 
+# ==============================================================================
+# Command Generation (Spec 07)
+# ==============================================================================
+
+# Quote an argument if it contains special characters
+#
+# Per Spec 07 (Option B): Quote arguments with spaces OR special characters
+quote_argument() {
+	local arg="$1"
+
+	# Check if quoting is needed (spaces or special characters)
+	if [[ "$arg" =~ [[:space:]\"\'\$\`\\] ]]; then
+		# Escape backslashes first
+		arg="${arg//\\/\\\\}"
+		# Escape double quotes
+		arg="${arg//\"/\\\"}"
+		# Escape dollar signs
+		arg="${arg//\$/\\\$}"
+		# Wrap in quotes
+		echo "\"$arg\""
+	else
+		echo "$arg"
+	fi
+}
+
 # Function to process a single server and generate command
 #
 # This function validates a single MCP server configuration and generates the
@@ -444,196 +1078,263 @@ process_server() {
 	local config="$3"
 	local cli_type="$4"
 
+	# Warn about unknown fields (non-fatal)
+	warn_unknown_fields "$config"
+
 	# Validate server name using MCP schema naming rules
-	# Schema: Server names must be valid JSON object keys
-	# Source: MCP specification - configuration object key naming
 	if ! validate_server_name "$name"; then
-		echo "Error: Server name '$name' is invalid. Must contain only alphanumeric characters, hyphens, and underscores" >&2
+		cat >&2 <<EOF
+Error: Invalid server name
+Details: '$name' contains invalid characters
+Suggestion: Use only letters, numbers, hyphens, and underscores
+EOF
 		exit 1
 	fi
 
 	# Validate transport type enum
-	# Schema: type field must be one of: http, sse, stdio
-	# - http: Remote HTTP/HTTPS endpoint (recommended)
-	# - sse: Remote Server-Sent Events endpoint (deprecated, use http)
-	# - stdio: Local process via standard input/output
-	# Source: MCP specification - transport types
-	if [[ ! "$type" =~ ^(http|sse|stdio)$ ]]; then
-		echo "Error: 'type' must be one of: http, sse, stdio (got '$type')" >&2
+	if ! validate_transport_type "$type"; then
+		cat >&2 <<EOF
+Error: Invalid transport type
+Details: '$type' is not supported
+Suggestion: Use one of: http, sse, stdio
+EOF
 		exit 1
+	fi
+
+	# Extract scope early for CLI-specific validation
+	local scope
+	scope=$(echo "$config" | jq -r '.scope // empty')
+
+	# CLI-specific scope validation (Spec 04)
+	if [ "$cli_type" = "amp" ]; then
+		# Amp does NOT support scope - reject if provided
+		if ! reject_scope_for_amp "$scope"; then
+			exit 1
+		fi
+	else
+		# Claude Code - validate scope if provided
+		if [ -n "$scope" ]; then
+			if ! validate_scope_for_claude "$scope"; then
+				cat >&2 <<EOF
+Error: Invalid scope value
+Details: '$scope' is not valid
+Suggestion: 'scope' must be one of: local, project, user
+EOF
+				exit 1
+			fi
+		fi
+	fi
+
+	# Validate includeTools for Amp (Spec 05)
+	local include_tools
+	include_tools=$(echo "$config" | jq '.includeTools // empty')
+	if [ -n "$include_tools" ] && [ "$include_tools" != "null" ]; then
+		# Validate transport compatibility
+		if ! validate_includeTools_for_transport "$include_tools" "$type"; then
+			exit 1
+		fi
+		# Validate the patterns themselves
+		if ! validate_includeTools "$include_tools"; then
+			exit 1
+		fi
 	fi
 
 	# Get the appropriate CLI command based on CLI type
 	local cli_base_cmd
 	if ! cli_base_cmd=$(get_cli_command "$cli_type"); then
-		echo "Error: Invalid CLI type '$cli_type'. Must be: claude, amp" >&2
+		cat >&2 <<EOF
+Error: Invalid CLI type
+Details: '$cli_type' is not supported
+Suggestion: Must be: claude or amp
+EOF
 		exit 1
-	fi
-
-	# Build base command with the selected CLI
-	# Note: --transport flag is Claude Code specific and not supported by Amp
-	# Amp automatically detects transport type from server response headers
-	if [[ "$cli_type" == "claude" ]]; then
-		cmd="$cli_base_cmd --transport $type $name"
-	else
-		cmd="$cli_base_cmd $name"
 	fi
 
 	# Build command based on transport type
 	if [[ "$type" == "http" ]] || [[ "$type" == "sse" ]]; then
-		# HTTP/SSE transport validation and command building
-		# Schema: HTTP and SSE transports REQUIRE the url field
+		# ==== HTTP/SSE Transport Command Building ====
+
+		# Extract and validate URL
+		local url
 		url=$(echo "$config" | jq -r '.url // empty')
 
 		if [ -z "$url" ]; then
-			echo "Error: 'url' field is required for $type transport" >&2
+			cat >&2 <<EOF
+Error: Missing required field
+Details: 'url' field is required for $type transport
+Suggestion: Provide a valid URL, e.g., "url": "https://api.example.com"
+EOF
 			exit 1
 		fi
 
-		# Validate URL format using HTTP(S) URL validation
-		# Schema: url must be a valid HTTP or HTTPS URL
-		# Source: MCP specification - HTTP/SSE transport requirements
 		if ! validate_url "$url"; then
-			echo "Error: Invalid URL format for '$url'. Must be valid HTTP(S) URL" >&2
+			cat >&2 <<EOF
+Error: Invalid URL format
+Details: '$url' is not a valid URL
+Suggestion: URL must start with http:// or https://, e.g., https://api.example.com
+EOF
 			exit 1
 		fi
 
-		cmd="$cmd $url"
+		# Start building command
+		# Order for HTTP/SSE: base → transport → name → URL → headers → scope
+		# (Transport flag comes before name in Claude Code)
+		local transport_flag
+		transport_flag=$(generate_transport_flag "$type" "$cli_type")
+		if [ -n "$transport_flag" ]; then
+			cmd="$cli_base_cmd $transport_flag $name $url"
+		else
+			cmd="$cli_base_cmd $name $url"
+		fi
 
-		# Optional: headers field for HTTP/SSE authentication and custom headers
-		# Schema: headers is optional, must be object if present
-		# Type: object (key-value pairs of strings)
-		# Use case: Authentication (Bearer tokens, API keys), custom headers
-		# Source: MCP specification - HTTP transport headers
+		# Process headers
+		local headers
 		headers=$(echo "$config" | jq '.headers // empty')
-		if [ -n "$headers" ] && [ "$headers" != "null" ]; then
-			# Validate headers is an object type
-			if ! validate_is_object "$headers"; then
-				echo "Error: 'headers' must be an object (key-value pairs)" >&2
+		if [ -n "$headers" ] && [ "$headers" != "null" ] && [ "$headers" != "{}" ]; then
+			# Validate headers structure
+			if ! validate_headers "$headers"; then
+				cat >&2 <<EOF
+Error: Invalid headers format
+Details: 'headers' must be a JSON object with string values
+Suggestion: Use format: {"Key": "Value"}
+EOF
 				exit 1
 			fi
 
-			while IFS= read -r line; do
-				key=$(echo "$line" | jq -r '.key')
-				value=$(echo "$line" | jq -r '.value')
-				cmd="$cmd --header \"$key: $value\""
-			done < <(echo "$config" | jq -c '.headers | to_entries[] | {key: .key, value: .value}')
+			# Format and add headers based on CLI type
+			local header_flags
+			header_flags=$(format_headers "$headers" "$cli_type")
+			if [ -n "$header_flags" ]; then
+				while IFS= read -r flag; do
+					if [ -n "$flag" ]; then
+						cmd="$cmd $flag"
+					fi
+				done <<<"$header_flags"
+			fi
+		fi
+
+		# Add scope flag (Claude Code only)
+		local scope_flag
+		scope_flag=$(generate_scope_flag "$scope" "$cli_type")
+		if [ -n "$scope_flag" ]; then
+			cmd="$cmd $scope_flag"
 		fi
 
 	elif [[ "$type" == "stdio" ]]; then
-		# Stdio transport validation and command building
-		# Schema: Stdio transports REQUIRE the command field
-		command=$(echo "$config" | jq -r '.command // empty')
+		# ==== Stdio Transport Command Building ====
 
-		if [ -z "$command" ]; then
-			echo "Error: 'command' field is required for stdio transport" >&2
+		# Extract and validate command
+		local server_command
+		server_command=$(echo "$config" | jq -r '.command // empty')
+
+		if [ -z "$server_command" ]; then
+			cat >&2 <<EOF
+Error: Missing required field
+Details: 'command' field is required for stdio transport
+Suggestion: Provide the command to execute, e.g., "command": "python"
+EOF
 			exit 1
 		fi
 
-		# Optional: env field for environment variables passed to stdio process
-		# Schema: env is optional, must be object if present
-		# Type: object with valid environment variable names as keys
-		# Keys must follow POSIX shell variable naming: start with letter/underscore,
-		# contain only alphanumeric characters and underscores
-		# Source: MCP specification - stdio transport environment variables
-		env_vars=$(echo "$config" | jq '.env // empty')
-		if [ -n "$env_vars" ] && [ "$env_vars" != "null" ]; then
-			# Validate env is an object type
-			if ! validate_is_object "$env_vars"; then
-				echo "Error: 'env' must be an object (key-value pairs)" >&2
-				exit 1
+		# Start building command
+		# Order for Claude Code Stdio: base → transport → name → scope → -- → command → args → env
+		# Order for Amp Stdio: base → name → stdio → command → args → env
+		if [ "$cli_type" = "claude" ]; then
+			local transport_flag
+			transport_flag=$(generate_transport_flag "stdio" "$cli_type")
+			cmd="$cli_base_cmd $transport_flag $name"
+
+			# Add scope BEFORE the -- separator (Claude only)
+			local scope_flag
+			scope_flag=$(generate_scope_flag "$scope" "$cli_type")
+			if [ -n "$scope_flag" ]; then
+				cmd="$cmd $scope_flag"
 			fi
-
-			while IFS= read -r line; do
-				key=$(echo "$line" | jq -r '.key')
-				value=$(echo "$line" | jq -r '.value')
-
-				# Validate environment variable name using POSIX shell naming rules
-				# Schema: Environment variable names must be valid shell variable identifiers
-				# Format: [a-zA-Z_][a-zA-Z0-9_]*
-				# Source: POSIX shell specification and MCP environment handling
-				if ! validate_env_var_name "$key"; then
-					echo "Error: Invalid environment variable name '$key'. Must start with letter or underscore, contain only alphanumeric characters and underscores" >&2
-					exit 1
-				fi
-
-				cmd="$cmd --env $key=\"$value\""
-			done < <(echo "$config" | jq -c '.env | to_entries[] | {key: .key, value: .value}')
+			# Add -- separator (Claude Code only)
+			cmd="$cmd --"
+		else
+			# Amp: base → name → stdio → command
+			cmd="$cli_base_cmd $name stdio"
 		fi
 
-		# Optional: scope field for configuration storage location
-		# Schema: scope must be one of: local, project, user
-		# - local: User-level ~/.claude.json (default, applies across all projects)
-		# - project: Repository-level .mcp.json at repo root (shared with team)
-		# - user: Compatibility alias for local (same as local)
-		# Source: Claude Code configuration documentation - Scope options
-		scope=$(echo "$config" | jq -r '.scope // empty')
-		if [ -n "$scope" ]; then
-			if ! validate_scope "$scope"; then
-				echo "Error: 'scope' must be one of: local, project, user. Got: '$scope'" >&2
-				exit 1
-			fi
-			cmd="$cmd --scope $scope"
-		fi
+		# Add the server command (quote if needed)
+		local quoted_command
+		quoted_command=$(quote_argument "$server_command")
+		cmd="$cmd $quoted_command"
 
-		# Add mandatory -- separator to separate Claude MCP flags from command arguments
-		# This tells the shell parser that everything after -- should be passed literally
-		cmd="$cmd --"
-
-		# Add the command to execute
-		cmd="$cmd $command"
-
-		# Optional: args field for command-line arguments to the stdio process
-		# Schema: args is optional for stdio, must be array of strings if present
-		# Type: array where each element is a string argument
-		# Usage: Arguments are appended to the command in order
-		# Source: MCP specification - stdio transport args field
+		# Process args
+		local args
 		args=$(echo "$config" | jq '.args // empty')
-		if [ -n "$args" ] && [ "$args" != "null" ]; then
-			# Validate args is an array type
+		if [ -n "$args" ] && [ "$args" != "null" ] && [ "$args" != "[]" ]; then
+			# Validate args is an array of strings
 			if ! validate_is_array "$args"; then
-				echo "Error: 'args' must be an array of strings" >&2
+				cat >&2 <<EOF
+Error: Invalid arguments format
+Details: 'args' must be an array
+Suggestion: Use format: ["arg1", "arg2"]
+EOF
 				exit 1
 			fi
 
-			# Validate array contains only string elements
-			# Schema: Each element in args array must be a string (not null, object, etc.)
 			if ! validate_array_of_strings "$args"; then
-				echo "Error: 'args' array contains non-string elements. All array elements must be strings" >&2
+				cat >&2 <<EOF
+Error: Invalid arguments content
+Details: 'args' array must contain only strings
+Suggestion: Each element must be a string, e.g., ["-m", "mcp.server"]
+EOF
 				exit 1
 			fi
 
+			# Add each argument
 			while IFS= read -r arg; do
-				# Quote args that contain spaces to preserve them as single arguments
-				if [[ "$arg" =~ [[:space:]] ]]; then
-					cmd="$cmd \"$arg\""
-				else
-					cmd="$cmd $arg"
-				fi
+				local quoted_arg
+				quoted_arg=$(quote_argument "$arg")
+				cmd="$cmd $quoted_arg"
 			done < <(echo "$config" | jq -r '.args[]')
 		fi
 
-		# Scope already handled before -- separator, skip the common section
-		scope=""
-	fi
-
-	# Add scope for http/sse (stdio already handled scope above, before -- separator)
-	if [[ "$type" != "stdio" ]]; then
-		# Optional: scope field for HTTP/SSE configuration storage location
-		# Schema: scope must be one of: local, project, user
-		# Default if not specified: local (user-level configuration, applies across all projects)
-		# Source: Claude Code configuration documentation - Scope options
-		scope=$(echo "$config" | jq -r '.scope // empty')
-		if [ -n "$scope" ]; then
-			if ! validate_scope "$scope"; then
-				echo "Error: 'scope' must be one of: local, project, user. Got: '$scope'" >&2
+		# Process environment variables (appended at end for both CLIs)
+		local env_vars
+		env_vars=$(echo "$config" | jq '.env // empty')
+		if [ -n "$env_vars" ] && [ "$env_vars" != "null" ] && [ "$env_vars" != "{}" ]; then
+			# Validate env is an object
+			if ! validate_is_object "$env_vars"; then
+				cat >&2 <<EOF
+Error: Invalid environment variables format
+Details: 'env' must be a JSON object
+Suggestion: Use format: {"VAR": "value"}
+EOF
 				exit 1
 			fi
-			cmd="$cmd --scope $scope"
+
+			# Add each environment variable
+			while IFS= read -r line; do
+				local key value
+				key=$(echo "$line" | jq -r '.key')
+				value=$(echo "$line" | jq -r '.value')
+
+				# Validate environment variable name
+				if ! validate_env_var_name "$key"; then
+					cat >&2 <<EOF
+Error: Invalid environment variable name
+Details: '$key' is not a valid variable name
+Suggestion: Must start with letter or underscore, contain only alphanumeric and underscores
+EOF
+					exit 1
+				fi
+
+				# Quote the value if needed
+				local quoted_value
+				quoted_value=$(quote_argument "$value")
+				# Remove outer quotes for env var format
+				quoted_value="${quoted_value#\"}"
+				quoted_value="${quoted_value%\"}"
+				cmd="$cmd $key=\"$quoted_value\""
+			done < <(echo "$config" | jq -c '.env | to_entries[] | {key: .key, value: .value}')
 		fi
 	fi
 
-	# Execute or print
+	# Execute or print the command
 	if [ "$EXECUTE" = true ]; then
 		eval "$cmd"
 	else

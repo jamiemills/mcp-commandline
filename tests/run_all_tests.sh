@@ -46,13 +46,28 @@ else
 fi
 
 echo ""
+
+# Run CLI Differences tests
+echo "Running: CLI Differences Tests (Headers, Scope, Transport)"
+echo "─────────────────────────────────────────────────────────────"
+if "$SCRIPT_DIR/test_cli_differences.sh" >/dev/null 2>&1; then
+	echo -e "${GREEN}✓ CLI Differences tests passed${NC}"
+	TOTAL_PASSED=$((TOTAL_PASSED + 1))
+else
+	echo -e "${RED}✗ CLI Differences tests failed${NC}"
+	"$SCRIPT_DIR/test_cli_differences.sh"
+	TOTAL_FAILED=$((TOTAL_FAILED + 1))
+fi
+
+echo ""
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║                      SUMMARY                               ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
-echo "Test suites run:    2"
+TOTAL_SUITES=$((TOTAL_PASSED + TOTAL_FAILED))
+echo "Test suites run:    $TOTAL_SUITES"
 if [ $TOTAL_FAILED -eq 0 ]; then
-	echo -e "Test suites passed: ${GREEN}2${NC}"
+	echo -e "Test suites passed: ${GREEN}$TOTAL_PASSED${NC}"
 	echo -e "Test suites failed: ${GREEN}0${NC}"
 else
 	echo -e "Test suites passed: $TOTAL_PASSED"

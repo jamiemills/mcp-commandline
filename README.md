@@ -6,6 +6,52 @@ A shell script that converts JSON MCP server configuration into MCP CLI commands
 
 This script simplifies adding Model Context Protocol (MCP) servers to your preferred CLI tool by accepting JSON configuration and generating the appropriate MCP command. It handles all three transport types: HTTP, SSE, and stdio. Supports both Claude Code (`claude mcp add`) and Sourcegraph Amp (`amp mcp add`).
 
+## Specification Compliance
+
+This script generates MCP server configuration commands that conform to official specifications for multiple CLIs. Each CLI has specific requirements and supported features.
+
+### Claude Code Specification
+- **Source**: [Claude Code Documentation](https://code.claude.com/docs/en/mcp)
+- **Version**: Latest (updated Jan 2025)
+- **Transport Detection**: Explicit via `--transport` flag
+- **Supported Transports**: http, sse, stdio
+- **Scope Support**: Yes (local, project, user)
+- **Header Format**: `"Key: Value"` (colon with space)
+
+### Amp Specification
+- **Source**: [Amp Manual - MCP](https://ampcode.com/manual)
+- **Version**: Latest (updated Jan 2025)
+- **Transport Detection**: Automatic from server headers (no flag)
+- **Supported Transports**: http, sse, stdio
+- **Scope Support**: No (uses global amp.mcpServers)
+- **Header Format**: `"Key=Value"` (equals, no space)
+- **Additional Features**: includeTools for tool filtering (stdio only)
+
+### General MCP Standard
+- **Specification**: [Model Context Protocol](https://modelcontextprotocol.io/)
+- **Version**: 2025-11-25
+
+## Feature Comparison: Claude Code vs. Amp
+
+| Feature | Claude Code | Amp | Notes |
+|---------|-------------|-----|-------|
+| **Transport: HTTP** | ✅ Yes | ✅ Yes | Default for URL-based servers |
+| **Transport: SSE** | ✅ Yes | ✅ Yes | Deprecated, use HTTP |
+| **Transport: Stdio** | ✅ Yes | ✅ Yes | For local processes |
+| **Transport Flag** | ✅ Required | ❌ Auto-detect | Claude requires explicit flag |
+| **Scope Support** | ✅ Yes | ❌ No | Amp uses global location only |
+| **Scope Options** | local, project, user | N/A | Control where config is stored |
+| **Header Format** | `"Key: Value"` | `"Key=Value"` | Different separator syntax |
+| **includeTools** | ❌ Not supported | ✅ Yes (stdio) | Filters which tools are exposed |
+| **Command Prefix** | `claude mcp add` | `amp mcp add` | Different CLI commands |
+
+### Key Differences Summary
+
+1. **Headers**: Claude uses colon format (`Authorization: token`), Amp uses equals format (`Authorization=token`)
+2. **Scope**: Claude supports it, Amp doesn't (global only)
+3. **Transport Flag**: Claude requires it, Amp auto-detects
+4. **includeTools**: Amp-specific for tool filtering
+
 ## Installation
 
 ```bash
@@ -29,7 +75,7 @@ json-to-mcp-add.sh --cli claude '{"name":"myserver","url":"https://api.example.c
 
 # Generate Sourcegraph Amp command
 json-to-mcp-add.sh --cli amp '{"name":"myserver","url":"https://api.example.com"}'
-# Output: amp mcp add --transport http myserver https://api.example.com
+# Output: amp mcp add myserver https://api.example.com
 ```
 
 **Preference Persistence:** Your CLI choice is automatically saved to `~/.config/mcp-commandline/config` (or `~/.mcp-commandline-config` as fallback). Once you specify a CLI preference, you don't need to include `--cli` on subsequent invocations—it will use your saved preference.
@@ -216,9 +262,14 @@ json-to-mcp-add.sh --cli amp < ~/.claude/config.json
 
 Output:
 ```
-amp mcp add --transport http notion https://mcp.notion.com/mcp --header "Authorization: Bearer token"
-amp mcp add --transport stdio airtable -- npx -y airtable-mcp-server
+amp mcp add notion https://mcp.notion.com/mcp --header "Authorization=Bearer token"
+amp mcp add airtable stdio npx -y airtable-mcp-server
 ```
+
+Note the differences:
+- Amp omits `--transport` flag (auto-detected)
+- Amp uses `=` in headers instead of `: `
+- Amp omits `--` separator for stdio
 
 ### Flat Format
 
@@ -302,8 +353,10 @@ EOF
 
 Output:
 ```
-amp mcp add --transport stdio postgres --env PGUSER="admin" -- npx -y @modelcontextprotocol/server-postgres
+amp mcp add postgres stdio npx -y @modelcontextprotocol/server-postgres PGUSER="admin"
 ```
+
+Note: Amp places environment variables after the command/args (no `--env` prefix, no `--` separator).
 
 #### HTTP Server (Type Inferred)
 
@@ -345,8 +398,10 @@ EOF
 
 Output:
 ```
-claude mcp add --transport stdio local-server --env PORT="3000" -- node server.js
+claude mcp add --transport stdio local-server -- node server.js PORT="3000"
 ```
+
+Note: Environment variables are placed after the command and arguments.
 
 #### SSE Server
 

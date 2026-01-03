@@ -36,6 +36,18 @@ Tests for input validation and edge cases.
 
 **Tests:** 25
 
+### `test_cli_differences.sh`
+Tests for CLI-specific differences (per Specs 02, 03, 04, 05).
+
+**Coverage:**
+- Header formatting (Claude: colon, Amp: equals)
+- Scope handling (Claude: supported, Amp: rejected)
+- Transport flag presence (Claude: required, Amp: auto-detect)
+- includeTools validation (Amp-only, stdio-only)
+- Separator handling (Claude: `--`, Amp: none)
+
+**Tests:** 24
+
 ### `run_all_tests.sh`
 Master test runner that executes all test suites and provides a summary.
 
@@ -66,9 +78,9 @@ All tests use isolated test directories to avoid interfering with your system co
 
 ## Test Statistics
 
-- **Total tests:** 45
-- **Test suites:** 2
-- **Areas covered:** CLI selection, validation, configuration persistence, error handling
+- **Total tests:** 69
+- **Test suites:** 3
+- **Areas covered:** CLI selection, validation, configuration persistence, error handling, header formatting, scope handling, transport flags, includeTools
 
 ## Test Isolation
 
