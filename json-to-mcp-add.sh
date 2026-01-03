@@ -27,7 +27,7 @@ Examples:
 
   Generate Sourcegraph Amp command:
     $0 --cli amp '{"name":"github","url":"https://mcp.github.com"}'
-    Output: amp mcp add --transport http github https://mcp.github.com
+    Output: amp mcp add github https://mcp.github.com
 
   Execute the command directly:
     $0 --cli claude --execute < config.json
@@ -471,7 +471,13 @@ process_server() {
 	fi
 
 	# Build base command with the selected CLI
-	cmd="$cli_base_cmd --transport $type $name"
+	# Note: --transport flag is Claude Code specific and not supported by Amp
+	# Amp automatically detects transport type from server response headers
+	if [[ "$cli_type" == "claude" ]]; then
+		cmd="$cli_base_cmd --transport $type $name"
+	else
+		cmd="$cli_base_cmd $name"
+	fi
 
 	# Build command based on transport type
 	if [[ "$type" == "http" ]] || [[ "$type" == "sse" ]]; then

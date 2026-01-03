@@ -66,7 +66,7 @@ test_claude_output() {
 test_amp_output() {
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" --cli amp '{"name":"test","url":"https://api.example.com"}')
-	[[ "$output" == "amp mcp add --transport http test https://api.example.com" ]]
+	[[ "$output" == "amp mcp add test https://api.example.com" ]]
 }
 
 # Test 3: Config file is created with --cli claude
@@ -89,7 +89,7 @@ test_saved_preference() {
 	# Run without --cli and verify it uses amp
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" '{"name":"test2","url":"https://api.example.com"}')
-	[[ "$output" == "amp mcp add --transport http test2 https://api.example.com" ]]
+	[[ "$output" == "amp mcp add test2 https://api.example.com" ]]
 }
 
 # Test 6: Override saved preference
@@ -132,7 +132,7 @@ test_claude_stdio() {
 test_amp_headers() {
 	local output
 	output=$(XDG_CONFIG_HOME="$TEST_CONFIG_DIR" "$SCRIPT" --cli amp '{"name":"api","url":"https://api.example.com","headers":{"Authorization":"Bearer token"}}')
-	[[ "$output" == "amp mcp add --transport http api https://api.example.com --header \"Authorization: Bearer token\"" ]]
+	[[ "$output" == "amp mcp add api https://api.example.com --header \"Authorization: Bearer token\"" ]]
 }
 
 # Test 11: Multiple headers
@@ -186,7 +186,7 @@ test_claude_desktop_format() {
 }
 EOF
 	)
-	[[ "$output" == "amp mcp add --transport http github https://mcp.github.com" ]]
+	[[ "$output" == "amp mcp add github https://mcp.github.com" ]]
 }
 
 # Test 17: SSE transport type
