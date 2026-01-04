@@ -13,7 +13,7 @@ The tool features:
 - **Automatic Transport Inference** — Detects `http`, `sse`, or `stdio` from your configuration
 - **Complete Validation** — RFC 3986 URL validation, POSIX environment variable names, field type checking
 - **Header Format Translation** — Automatically converts headers to CLI-specific format (colon-space for Claude, equals for Amp)
-- **Scope Management** — Handles Claude Code's local/project/user scopes
+- **Scope Management** — Handles CLI-specific scope options for configuration storage
 - **Preference Persistence** — Saves your CLI choice for subsequent uses
 
 ## Specification Compliance
@@ -133,14 +133,14 @@ When you configure an MCP server with this script, you're participating in a lay
 - Where the server is located (command path or URL)
 - How to authenticate (headers for HTTP/SSE, environment variables for stdio)
 
-### Layer 2: Connection Layer (Claude Code Runtime)
-**Establishing the connection** — Claude Code's runtime handles:
+### Layer 2: Connection Layer (CLI Runtime)
+**Establishing the connection** — The CLI runtime (Claude Code or Amp) handles:
 - TCP/TLS socket creation
 - Process spawning (for stdio)
 - HTTP/HTTPS connections (for remote servers)
 
-### Layer 3: Protocol Layer (Claude Code Runtime)
-**Speaking MCP** — Once connected, the runtime performs:
+### Layer 3: Protocol Layer (CLI Runtime)
+**Speaking MCP** — Once connected, the CLI runtime performs:
 - JSON-RPC 2.0 message exchange
 - `InitializeRequest` handshake to negotiate capabilities
 - `InitializeResponse` containing what the server offers
@@ -504,7 +504,7 @@ Error: Invalid environment variable name '2INVALID'. Must start with letter or u
 
 ## What Happens After Configuration
 
-Once you run the generated `claude mcp add` command, Claude Code performs the following sequence:
+Once you run the generated MCP command (for either Claude Code or Amp), the CLI performs the following sequence:
 
 ### 1. Configuration Storage
 The server configuration is saved to the specified scope:
@@ -513,7 +513,7 @@ The server configuration is saved to the specified scope:
 - `user` → `~/.claude.json` (same as `local`, for compatibility)
 
 ### 2. Server Initialization
-When Claude Code starts or you interact with the server, it:
+When the CLI starts or you interact with the server, it:
 - Connects using the configured transport (stdio command, HTTP URL, or SSE endpoint)
 - Sends an `InitializeRequest` containing:
   - Protocol version requirement
@@ -529,7 +529,7 @@ The server responds with `InitializeResponse` containing:
 - **Server capabilities** — What advanced features the server supports
 
 ### 4. Runtime Operation
-Once initialized, Claude Code can:
+Once initialized, the CLI can:
 - Request resources from the server for context
 - Call tools provided by the server
 - Use prompts to structure queries
@@ -549,24 +549,24 @@ EOF
 
 # Output: claude mcp add --transport http github https://mcp.github.com --header "Authorization: Bearer ghp_..."
 
-# What happens after (what Claude Code does)
+# What happens after (what the CLI does)
 # 1. Stores configuration in ~/.claude.json (user-level, available across projects)
 # 2. On next use, connects to https://mcp.github.com
 # 3. Sends InitializeRequest negotiating capabilities
 # 4. Receives InitializeResponse with available resources/tools
-# 5. You can now ask Claude to search GitHub, create issues, etc.
+# 5. You can now ask the CLI to search GitHub, create issues, etc.
 ```
 
 ## Design Principles
 
 This script implements comprehensive schema validation based on the official MCP specification:
 
-1. **Schema-Driven** — All validation rules are derived from the MCP specification and Claude Code documentation
+1. **Schema-Driven** — All validation rules are derived from the MCP specification and CLI documentation
 2. **Strict Validation** — Fields are validated for type, format, and content according to schema rules
 3. **Transparent Conversion** — The script converts between two supported JSON formats (flat and Claude Desktop)
 4. **Clear Errors** — Validation failures include specific, actionable error messages citing the schema rule violated
 5. **No Data Loss** — All schema-valid configuration is preserved in the generated command
-6. **Layered Architecture** — Focuses solely on transport configuration, leaving protocol negotiation to Claude Code runtime
+6. **Layered Architecture** — Focuses solely on transport configuration, leaving protocol negotiation to the CLI runtime
 
 ## Implementation Details
 
@@ -578,7 +578,7 @@ The validation functions in the script are documented with:
 
 To understand the schema validation details, see comments in `json-to-mcp-add.sh` which cite:
 - MCP Specification 2025-11-25
-- Claude Code Configuration Documentation
+- CLI Configuration Documentation
 - POSIX Shell Variable Naming Convention
 
 ## Requirements
