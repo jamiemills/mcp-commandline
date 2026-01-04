@@ -2,7 +2,7 @@
 
 A shell script that converts JSON MCP server configuration into MCP CLI commands for Claude Code or Sourcegraph Amp.
 
-**Status:** ✅ Production Ready — All 10 implementation phases complete, 45+ tests passing (100% success rate)
+**Status:** ✅ Production Ready — 45+ tests passing (100% success rate)
 
 ## Overview
 
